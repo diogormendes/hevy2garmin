@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hevy2garmin-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hevy2garmin
+      POSTGRES_USER: hevy2garmin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - hevy2garmin_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hevy2garmin -d hevy2garmin"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  hevy2garmin:
+    image: drmspidi/hevy2garmin:latest
+    container_name: hevy2garmin
+    restart: unless-stopped
+    ports:
+      - "8124:8096"
+    environment:
+      DATABASE_URL: postgresql://hevy2garmin:${POSTGRES_PASSWORD}@postgres:5432/hevy2garmin
+      HEVY_API_KEY: ${HEVY_API_KEY}
+      H2G_PASSWORD: ${H2G_PASSWORD}
+      H2G_SECRET: ${H2G_SECRET}
+      HEVY2GARMIN_SECRET: ${HEVY2GARMIN_SECRET}
+      CRON_SECRET: ${CRON_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  hevy2garmin_db:

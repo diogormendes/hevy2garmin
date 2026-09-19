@@ -1,4 +1,4 @@
-name: Publish Docker image
+name: Publish Docker UI image
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   publish:
-    name: Build and publish multi-arch image
+    name: Build and publish Next.js UI image
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -32,13 +32,15 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./web
+          file: ./web/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            drmspidi/hevy2garmin:cli-latest
-            drmspidi/hevy2garmin:0.12.0
-            drmspidi/hevy2garmin:cli-upstream-4a18c02
+            drmspidi/hevy2garmin:latest
+            drmspidi/hevy2garmin:0.12.0-ui
+            drmspidi/hevy2garmin:ui-latest
           labels: |
             org.opencontainers.image.source=https://github.com/drkostas/hevy2garmin
             org.opencontainers.image.revision=4a18c02
+            org.opencontainers.image.title=hevy2garmin-web
