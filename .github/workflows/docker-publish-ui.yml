@@ -34,7 +34,10 @@ jobs:
         with:
           context: ./web
           file: ./web/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          # The NAS currently uses the same amd64 image family as the former
+          # dashboard tag. Publish arm64 separately once an ARM builder is
+          # available; QEMU multi-arch builds can stall on this Next.js bundle.
+          platforms: linux/amd64
           push: true
           tags: |
             drmspidi/hevy2garmin:latest
