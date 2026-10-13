@@ -82,7 +82,7 @@ def begin(email: str, password: str) -> dict:
         return {"status": "rate_limited", "message": str(e)[:200]}
     except GarminConnectConnectionError as e:
         return {"status": "error", "message": str(e)[:200]}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the typed cases are above; anything else is reported as an error
         logger.warning("garmin_login.begin unexpected error: %s", e)
         return {"status": "error", "message": str(e)[:200]}
 
@@ -107,7 +107,7 @@ def complete(session_id: str, code: str) -> dict:
     except (GarminConnectAuthenticationError, ValueError):
         # Wrong/empty code — keep the pending entry so the user can re-enter just the code.
         return {"status": "mfa_failed", "message": "Code rejected, try again"}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the typed cases are above; anything else is reported as an error
         logger.warning("garmin_login.complete unexpected error: %s", e)
         return {"status": "error", "message": str(e)[:200]}
     _store.pop(session_id, time.time())

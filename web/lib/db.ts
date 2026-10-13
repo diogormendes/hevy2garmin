@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { ensureSchema } from "./schema";
+import { resolveDatabaseUrl, DATABASE_URL_HINT } from "./database-url";
 
 /**
  * Tagged-template SQL function matching the @neondatabase/serverless shape
@@ -9,8 +10,8 @@ import { ensureSchema } from "./schema";
  * as a JSONB payload. Do NOT JSON.stringify values before `sql.json(x)` — that
  * produces a double-encoded string in the column.
  *
- * Reads the hevy2garmin Postgres URL from DATABASE_URL (same var the Python
- * PostgresDatabase reads).
+ * Reads the Postgres URL through `resolveDatabaseUrl`, which accepts the same
+ * four variable names Python does, in the same order (#615).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = any;
@@ -24,9 +25,11 @@ let cached: SqlTag | null = null;
 
 export function getDb(): SqlTag {
   if (cached) return cached;
-  const url = process.env.DATABASE_URL;
+  const url = resolveDatabaseUrl();
   if (!url) {
-    throw new Error("DATABASE_URL not set");
+    // Names all four, because the one a user has set is often not the one the
+    // old message demanded: Vercel Storage sets POSTGRES_URL (#615).
+    throw new Error(`No Postgres connection string. Set one of: ${DATABASE_URL_HINT}`);
   }
   const client = postgres(url, { prepare: false });
 

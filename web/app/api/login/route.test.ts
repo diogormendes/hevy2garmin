@@ -25,11 +25,14 @@ vi.mock("@/lib/login-ratelimit", () => ({
 
 import { POST } from "./route";
 
-function req(password: unknown, next?: string): Request {
-  const url = next ? `http://h/api/login?next=${encodeURIComponent(next)}` : "http://h/api/login";
+function req(password: unknown, next?: string, opts: { base?: string; proto?: string } = {}): Request {
+  const base = opts.base ?? "http://h";
+  const url = next ? `${base}/api/login?next=${encodeURIComponent(next)}` : `${base}/api/login`;
+  const headers: Record<string, string> = { "content-type": "application/json", "x-forwarded-for": "9.9.9.9, 10.0.0.1" };
+  if (opts.proto) headers["x-forwarded-proto"] = opts.proto;
   return new Request(url, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-forwarded-for": "9.9.9.9, 10.0.0.1" },
+    headers,
     body: JSON.stringify({ password }),
   });
 }
@@ -74,5 +77,34 @@ describe("POST /api/login", () => {
     const res = await POST(req("nope"));
     expect(res.status).toBe(429);
     expect(recordFailure).toHaveBeenCalled();
+  });
+
+  // #675: a Secure cookie over plain http to a LAN address is dropped by the
+  // browser, so the flag must follow the real scheme, not NODE_ENV.
+  describe("Secure flag follows the request scheme", () => {
+    const secure = (res: Response) => /;\s*secure/i.test(res.headers.get("set-cookie") ?? "");
+
+    it("plain http to a LAN address → no Secure, even in production", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      const res = await POST(req("correct-horse", undefined, { base: "http://192.168.0.30:8000" }));
+      vi.unstubAllEnvs();
+      expect(res.status).toBe(200);
+      expect(secure(res)).toBe(false);
+    });
+
+    it("https request → Secure", async () => {
+      const res = await POST(req("correct-horse", undefined, { base: "https://h2g.example.com" }));
+      expect(secure(res)).toBe(true);
+    });
+
+    it("behind a TLS proxy (x-forwarded-proto: https) → Secure", async () => {
+      const res = await POST(req("correct-horse", undefined, { proto: "https" }));
+      expect(secure(res)).toBe(true);
+    });
+
+    it("x-forwarded-proto: http wins over an https URL", async () => {
+      const res = await POST(req("correct-horse", undefined, { base: "https://h", proto: "http" }));
+      expect(secure(res)).toBe(false);
+    });
   });
 });

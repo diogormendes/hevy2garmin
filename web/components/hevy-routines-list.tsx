@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { withBasePath } from "@/lib/base-path";
 
 interface Routine {
   id: string;
@@ -12,12 +13,20 @@ interface Routine {
 const btn =
   "rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-active disabled:opacity-50";
 
-function RoutineRow({ r }: { r: Routine }) {
+function RoutineRow({ r, onGarmin }: { r: Routine; onGarmin: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "sync" | "schedule">(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [synced, setSynced] = useState(false);
+  // Starts from the server's synced table, so a routine already on Garmin still
+  // reads "Re-sync" after a refresh (#735). When the server's answer changes (a
+  // sync elsewhere, a Remove), the row follows it.
+  const [synced, setSynced] = useState(onGarmin);
+  const [serverSynced, setServerSynced] = useState(onGarmin);
+  if (serverSynced !== onGarmin) {
+    setServerSynced(onGarmin);
+    setSynced(onGarmin);
+  }
   const [showSchedule, setShowSchedule] = useState(false);
   const [date, setDate] = useState("");
   const [recurring, setRecurring] = useState(false);
@@ -29,14 +38,14 @@ function RoutineRow({ r }: { r: Routine }) {
     setError(null);
     setMsg(null);
     try {
-      const res = await fetch(`/api/routines/${encodeURIComponent(r.id)}/sync`, { method: "POST" });
-      const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      const res = await fetch(withBasePath(`/api/routines/${encodeURIComponent(r.id)}/sync`), { method: "POST" });
+      const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; status?: string };
       if (!res.ok || !d.ok) {
         setError(d.error ?? `Request failed (${res.status}).`);
         return;
       }
       setSynced(true);
-      setMsg("Synced to Garmin as a planned workout.");
+      setMsg(d.status === "skipped" ? "Already on Garmin, nothing changed." : "Synced to Garmin as a planned workout.");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -57,7 +66,7 @@ function RoutineRow({ r }: { r: Routine }) {
       const payload = recurring
         ? { mode: "recurring", weekday, start_date: date, weeks: Number.parseInt(weeks || "1", 10) }
         : { date };
-      const res = await fetch(`/api/routines/${encodeURIComponent(r.id)}/schedule`, {
+      const res = await fetch(withBasePath(`/api/routines/${encodeURIComponent(r.id)}/schedule`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -84,6 +93,7 @@ function RoutineRow({ r }: { r: Routine }) {
           <div className="truncate text-sm font-medium text-text">{r.title}</div>
           <div className="mt-0.5 text-xs text-text-muted">
             {r.exercises} exercise{r.exercises === 1 ? "" : "s"}
+            {synced && <span className="text-success"> · on Garmin</span>}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -177,11 +187,15 @@ interface BulkState {
   done: boolean;
 }
 
-export function HevyRoutinesList() {
+/** `syncedIds`: Hevy ids of the routines the synced table has on Garmin. */
+export function HevyRoutinesList({ syncedIds = [] }: { syncedIds?: string[] }) {
+  const onGarmin = new Set(syncedIds);
   const router = useRouter();
   const [phase, setPhase] = useState<"loading" | "ready">("loading");
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [note, setNote] = useState<string | null>(null);
+  // A demo is not a failure, so it must not be phrased as one (#634).
+  const [demo, setDemo] = useState(false);
   const [query, setQuery] = useState("");
   const [bulk, setBulk] = useState<BulkState | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
@@ -189,11 +203,12 @@ export function HevyRoutinesList() {
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/hevy-routines")
+    fetch(withBasePath("/api/hevy-routines"))
       .then((res) => res.json())
-      .then((d: { routines?: Routine[]; error?: string }) => {
+      .then((d: { routines?: Routine[]; error?: string; demo?: boolean }) => {
         if (!alive) return;
         setRoutines(Array.isArray(d.routines) ? d.routines : []);
+        if (d.demo) setDemo(true);
         if (d.error) setNote(d.error);
         setPhase("ready");
       })
@@ -224,7 +239,7 @@ export function HevyRoutinesList() {
     for (const r of list) {
       if (stopRef.current) break;
       try {
-        const res = await fetch(`/api/routines/${encodeURIComponent(r.id)}/sync`, { method: "POST" });
+        const res = await fetch(withBasePath(`/api/routines/${encodeURIComponent(r.id)}/sync`), { method: "POST" });
         const d = (await res.json().catch(() => ({}))) as { ok?: boolean };
         if (res.ok && d.ok) synced += 1;
         else failed += 1;
@@ -305,7 +320,11 @@ export function HevyRoutinesList() {
         </div>
       ) : routines.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-text-muted">
-          {note ? `Couldn't load routines: ${note}` : "No routines found in Hevy."}
+          {demo
+            ? "The demo is not connected to a Hevy account, so there is nothing live to list here. The routines synced to Garmin are below."
+            : note
+              ? `Couldn't load routines: ${note}`
+              : "No routines found in Hevy."}
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-text-muted">
@@ -315,7 +334,7 @@ export function HevyRoutinesList() {
         <>
           <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-elevated">
             {filtered.map((r) => (
-              <RoutineRow key={r.id} r={r} />
+              <RoutineRow key={r.id} r={r} onGarmin={onGarmin.has(String(r.id))} />
             ))}
           </ul>
           <p className="mt-2 text-xs text-text-muted tabular-nums">

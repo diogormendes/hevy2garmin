@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchHevyRoutines } from "@/lib/hevy-routines";
+import { demoMode } from "@/lib/demo";
 
 // Reads live Hevy at request time — never at build. Read-only.
 export const dynamic = "force-dynamic";
@@ -10,6 +11,9 @@ export const runtime = "nodejs";
  * Read-only. Degrades to an empty list + note when Hevy is unreachable.
  */
 export async function GET() {
+  // See /api/candidates: a demo has no Hevy connection to list from (#634).
+  if (demoMode()) return NextResponse.json({ routines: [], demo: true });
+
   try {
     const routines = await fetchHevyRoutines();
     const items = routines.map((r) => ({

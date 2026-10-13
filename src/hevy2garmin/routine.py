@@ -45,6 +45,7 @@ def workout_content_hash(payload: dict) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+
 # Provenance sentinel appended to every synced routine's Garmin description. Sync
 # reconciliation only ever deletes a same-named Garmin workout that carries this marker,
 # so a workout the user hand-built in Garmin with the same title as a routine is never

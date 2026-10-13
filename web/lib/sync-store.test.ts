@@ -59,9 +59,14 @@ describe("postgresSyncStore binds the engine's SyncStore to pending-store for on
     expect(ps.markSynced).toHaveBeenCalledWith("w2", opts, SQL);
   });
   it("exposes exactly the SyncStore surface (bookkeeping only, no Garmin/Hevy)", () => {
+    // The point of this assertion is the absence of anything that talks to
+    // Garmin or Hevy, not the exact count. The merge methods are bookkeeping
+    // too: durable storage for the pre-merge backup and the circuit-breaker
+    // count, both of which have to outlive a serverless request (#585, #598).
     expect(Object.keys(store).sort()).toEqual([
-      "claimPending", "completePending", "deletePending", "getPending", "isSynced",
-      "loadPendingIds", "loadSyncedIds", "markSynced", "updatePending",
+      "claimPending", "clearMergeBackup", "completePending", "deletePending", "getPending",
+      "isSynced", "loadMergeBackup", "loadMergeFailures", "loadPendingIds", "loadSyncedIds",
+      "markSynced", "recordSyncLog", "saveMergeBackup", "saveMergeFailures", "updatePending",
     ]);
   });
 });

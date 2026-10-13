@@ -7,12 +7,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hevy2garmin.mapper import (
-    HEVY_TO_GARMIN,
     _UNKNOWN_CATEGORY,
-    lookup_exercise,
-    save_custom_mapping,
+    HEVY_TO_GARMIN,
     _custom_mappings,
     _ensure_custom_loaded,
+    lookup_exercise,
+    save_custom_mapping,
 )
 
 
@@ -24,7 +24,7 @@ class TestLookupBuiltIn:
         assert name == "Bench Press (Barbell)"
 
     def test_squat(self) -> None:
-        cat, subcat, name = lookup_exercise("Squat (Barbell)")
+        cat, _subcat, name = lookup_exercise("Squat (Barbell)")
         assert cat == 28
         assert name == "Squat (Barbell)"
 
@@ -35,7 +35,7 @@ class TestLookupBuiltIn:
         assert name == "Made Up Exercise 12345"
 
     def test_empty_string(self) -> None:
-        cat, subcat, name = lookup_exercise("")
+        cat, _subcat, name = lookup_exercise("")
         assert cat == _UNKNOWN_CATEGORY
         assert name == ""
 
@@ -55,23 +55,27 @@ class TestCustomMappings:
         # Reset custom state
         _custom_mappings.clear()
         import hevy2garmin.mapper as m
+
         m._custom_loaded = False
 
-        with patch.object(Path, "expanduser", return_value=mappings_file):
-            with patch("hevy2garmin.mapper._custom_loaded", False):
-                # Force reload
-                m._custom_loaded = False
-                m._custom_mappings.clear()
-                m._custom_mappings["Bench Press (Barbell)"] = (99, 88)
-                cat, subcat, _ = lookup_exercise("Bench Press (Barbell)")
-                assert cat == 99
-                assert subcat == 88
+        with (
+            patch.object(Path, "expanduser", return_value=mappings_file),
+            patch("hevy2garmin.mapper._custom_loaded", False),
+        ):
+            # Force reload
+            m._custom_loaded = False
+            m._custom_mappings.clear()
+            m._custom_mappings["Bench Press (Barbell)"] = (99, 88)
+            cat, subcat, _ = lookup_exercise("Bench Press (Barbell)")
+            assert cat == 99
+            assert subcat == 88
 
         # Cleanup
         m._custom_mappings.clear()
 
     def test_custom_does_not_affect_other_exercises(self) -> None:
         import hevy2garmin.mapper as m
+
         m._custom_mappings["Only This One"] = (1, 2)
         cat, _, _ = lookup_exercise("Squat (Barbell)")
         assert cat == 28  # unchanged
@@ -79,6 +83,7 @@ class TestCustomMappings:
 
     def test_save_custom_mapping_in_memory(self) -> None:
         import hevy2garmin.mapper as m
+
         m._custom_mappings["Test Exercise"] = (5, 10)
         cat, subcat, _ = lookup_exercise("Test Exercise")
         assert cat == 5
@@ -87,6 +92,7 @@ class TestCustomMappings:
 
     def test_missing_custom_file_no_crash(self) -> None:
         import hevy2garmin.mapper as m
+
         m._custom_loaded = False
         m._custom_mappings.clear()
         # Should not crash when file doesn't exist
@@ -102,11 +108,15 @@ class TestSaveCustomMappingCloud:
 
     def test_writes_to_db_on_cloud(self) -> None:
         from unittest.mock import MagicMock
+
         import hevy2garmin.mapper as m
+
         m._custom_mappings.clear()
         fake_db = MagicMock()
-        with patch("hevy2garmin.db.get_database_url", return_value="postgresql://x"), \
-             patch("hevy2garmin.db.get_db", return_value=fake_db):
+        with (
+            patch("hevy2garmin.db.get_database_url", return_value="postgresql://x"),
+            patch("hevy2garmin.db.get_db", return_value=fake_db),
+        ):
             save_custom_mapping("Agachamento Búlgaro", 28, 9)
         fake_db.save_custom_mapping.assert_called_once_with("Agachamento Búlgaro", 28, 9)
         assert m._custom_mappings["Agachamento Búlgaro"] == (28, 9)
@@ -114,22 +124,29 @@ class TestSaveCustomMappingCloud:
 
     def test_does_not_touch_filesystem_on_cloud(self, tmp_path: Path) -> None:
         from unittest.mock import MagicMock
+
         import hevy2garmin.mapper as m
+
         m._custom_mappings.clear()
         target = tmp_path / "custom_mappings.json"
-        with patch("hevy2garmin.db.get_database_url", return_value="postgresql://x"), \
-             patch("hevy2garmin.db.get_db", return_value=MagicMock()), \
-             patch.object(Path, "expanduser", return_value=target):
+        with (
+            patch("hevy2garmin.db.get_database_url", return_value="postgresql://x"),
+            patch("hevy2garmin.db.get_db", return_value=MagicMock()),
+            patch.object(Path, "expanduser", return_value=target),
+        ):
             save_custom_mapping("Foo (Bar)", 1, 2)
         assert not target.exists()  # DB path used, no file written
         m._custom_mappings.clear()
 
     def test_falls_back_to_file_when_local(self, tmp_path: Path) -> None:
         import hevy2garmin.mapper as m
+
         m._custom_mappings.clear()
         target = tmp_path / "custom_mappings.json"
-        with patch("hevy2garmin.db.get_database_url", return_value=None), \
-             patch.object(Path, "expanduser", return_value=target):
+        with (
+            patch("hevy2garmin.db.get_database_url", return_value=None),
+            patch.object(Path, "expanduser", return_value=target),
+        ):
             save_custom_mapping("Foo (Bar)", 12, 34)
         assert json.loads(target.read_text())["Foo (Bar)"] == [12, 34]
         assert m._custom_mappings["Foo (Bar)"] == (12, 34)
@@ -147,7 +164,7 @@ class TestNoDuplicateKeys:
 
         source = Path(__file__).parent.parent / "src" / "hevy2garmin" / "mapper.py"
         table = source.read_text().split("HEVY_TO_GARMIN", 1)[1]
-        keys = re.findall(r'^\s{4}"([^"]+)":\s*\(', table, re.M)
+        keys = re.findall(r'^\s{4}"([^"]+)":\s*\(', table, re.MULTILINE)
         repeated = [k for k, n in collections.Counter(keys).items() if n > 1]
         assert not repeated, f"exercise defined more than once: {repeated}"
 
@@ -173,9 +190,7 @@ class TestGenericSubcategory:
 
         source = Path(__file__).parent.parent / "src" / "hevy2garmin" / "mapper.py"
         table = source.read_text().split("HEVY_TO_GARMIN", 1)[1]
-        wrong = re.findall(
-            r'^\s{4}"([^"]+)":\s+\(\d+, 0\),\s+#.*generic.*$', table, re.M
-        )
+        wrong = re.findall(r'^\s{4}"([^"]+)":\s+\(\d+, 0\),\s+#.*generic.*$', table, re.MULTILINE)
         assert not wrong, f"'generic' entries using subcategory 0 instead of 65535: {wrong}"
 
     def test_swimming_is_not_a_boxing_drill(self) -> None:
@@ -212,6 +227,7 @@ class TestValidCategories:
         the UNKNOWN sentinel — an out-of-range category resolves to 'UNKNOWN' and
         would silently become TOTAL_BODY."""
         from hevy2garmin.merge import _category_to_string
+
         bad = {
             name: (c, s)
             for name, (c, s) in HEVY_TO_GARMIN.items()
@@ -223,14 +239,16 @@ class TestValidCategories:
         """Cardio machines resolve to the CARDIO category, not the TOTAL_BODY
         fallback they hit before."""
         from hevy2garmin.merge import _category_to_string
+
         for name in ("Cycling", "Treadmill", "Elliptical Trainer", "Rowing Machine"):
-            cat, sub, _ = lookup_exercise(name)
+            cat, _sub, _ = lookup_exercise(name)
             assert _category_to_string(cat) == "CARDIO", name
 
     def test_dumbbell_row_resolves_to_real_subcategory(self) -> None:
         """Chest Supported Incline Row (Dumbbell) now resolves to a real Row
         subcategory name instead of a broken out-of-range sub."""
         from hevy2garmin.merge import _exercise_to_string
+
         cat, sub, _ = lookup_exercise("Chest Supported Incline Row (Dumbbell)")
         assert _exercise_to_string(cat, sub) == "DUMBBELL_ROW"
 
@@ -266,7 +284,9 @@ class TestTemplateIdDoesNotOverrideTheTable:
             Path(__file__).parent.parent / "src" / "hevy2garmin" / "template_map.py"
         ).read_text()
         for name in ("Cycling", "Treadmill", "Elliptical Trainer", "Rowing Machine"):
-            m = re.search(rf'"([0-9A-F]+)": \([\d, ]+\),\s+# {re.escape(name)}$', source, re.M)
+            m = re.search(
+                rf'"([0-9A-F]+)": \([\d, ]+\),\s+# {re.escape(name)}$', source, re.MULTILINE
+            )
             assert m, f"no template id found for {name}"
             tid = m.group(1)
             assert tid in TEMPLATE_TO_GARMIN

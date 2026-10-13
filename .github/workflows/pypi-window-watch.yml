@@ -1,0 +1,91 @@
+name: PyPI deprecation window watch
+
+# hevy2garmin#515 promised a deprecation window ending 2026-10-31, in the CHANGELOG, the README
+# and the PyPI description. The removal half cannot happen before that date without breaking the
+# promise, and it should not depend on anyone remembering it afterwards either. This job says so
+# on the issue once the date has passed, and then stops.
+#
+# Same shape as hevy-spec-watch.yml (#524), which keeps the equivalent promise on #237.
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"   # Mondays 06:23 UTC, six minutes after the spec watch
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print instead of commenting on the issue"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  END_DATE: "2026-10-31"
+  ISSUE: "515"
+  # The marker is how the job knows it has already spoken. Without it a weekly
+  # schedule turns a single reminder into a comment every Monday for ever.
+  MARKER: "<!-- pypi-window-watch: reminded -->"
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Has the window closed
+        id: when
+        run: |
+          TODAY=$(date -u +%F)
+          echo "today=$TODAY end=$END_DATE"
+          if [ "$TODAY" \> "$END_DATE" ] || [ "$TODAY" = "$END_DATE" ]; then
+            echo "due=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "due=false" >> "$GITHUB_OUTPUT"
+            echo "not due yet; nothing to do"
+          fi
+
+      - name: Have I already said it
+        id: said
+        if: steps.when.outputs.due == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A closed issue also means the work is done, so treat that as said.
+          STATE=$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json state -q .state)
+          BODIES=$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments -q '.comments[].body')
+          if [ "$STATE" = "CLOSED" ] || printf '%s' "$BODIES" | grep -qF "$MARKER"; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "state=$STATE, marker present or issue closed; staying quiet"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Say it
+        if: steps.when.outputs.due == 'true' && steps.said.outputs.already == 'false' && (github.event_name == 'schedule' || inputs.dry_run == false)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "The deprecation window closed on $END_DATE, so the removal half of this is now due."
+            echo
+            echo "What was promised, and where:"
+            echo
+            echo "- \`CHANGELOG.md\`, in two places"
+            echo "- \`README.md\`, in the 0.12.0 notice"
+            echo "- the PyPI description of 0.12.0"
+            echo
+            echo "What is left:"
+            echo
+            echo "- remove \`publish.yml\` and the Python source"
+            echo "- mark \`hevy2garmin\` deprecated on PyPI"
+            echo "- garmin-auth's Python follows the same date"
+            echo
+            echo "Posted by the window watch so this did not depend on anyone remembering."
+            echo
+            echo "$MARKER"
+          } > comment.md
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+
+      - name: Dry run summary
+        if: steps.when.outputs.due == 'true' && steps.said.outputs.already == 'false' && github.event_name == 'workflow_dispatch' && inputs.dry_run != false
+        run: echo "window has closed and nothing has been said yet; dry run, not commenting"

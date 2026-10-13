@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { withBasePath } from "@/lib/base-path";
 
 interface Candidate {
   hevy_id: string;
@@ -47,7 +48,7 @@ function CandidateRow({ c, onSynced }: { c: Candidate; onSynced: (id: string) =>
     setBusy(live ? "live" : "preview");
     setError(null);
     try {
-      const res = await fetch(`/api/sync/${encodeURIComponent(c.hevy_id)}${live ? "?live=1" : ""}`, {
+      const res = await fetch(withBasePath(`/api/sync/${encodeURIComponent(c.hevy_id)}${live ? "?live=1" : ""}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(live ? { live: 1 } : {}),
@@ -135,12 +136,15 @@ export function CandidatesList() {
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [note, setNote] = useState<string | null>(null);
+  // A demo is not a failure, so it must not be phrased as one (#634).
+  const [demo, setDemo] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/candidates")
+    fetch(withBasePath("/api/candidates"))
       .then((r) => r.json())
-      .then((d: { candidates?: Candidate[]; error?: string }) => {
+      .then((d: { candidates?: Candidate[]; error?: string; demo?: boolean }) => {
+        if (d.demo) setDemo(true);
         if (!alive) return;
         setCandidates(Array.isArray(d.candidates) ? d.candidates : []);
         if (d.error) setNote(d.error);
@@ -167,7 +171,11 @@ export function CandidatesList() {
         </div>
       ) : candidates.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-6 text-center text-sm text-text-muted">
-          {note ? `Couldn't load candidates: ${note}` : "Everything from Hevy is already synced."}
+          {demo
+            ? "The demo is not connected to a Hevy account, so there is nothing live to list here. The synced history below is sample data."
+            : note
+              ? `Couldn't load candidates: ${note}`
+              : "Everything from Hevy is already synced."}
         </div>
       ) : (
         <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-elevated">

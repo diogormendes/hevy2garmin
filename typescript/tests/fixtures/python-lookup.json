@@ -1,0 +1,502 @@
+{
+"  Assisted   Pistol   Squats ": [
+28,
+47
+],
+"  Bench   Dip ": [
+30,
+0
+],
+"  Butterfly   (Pec   Deck) ": [
+9,
+2
+],
+"  Calf   Extension   (Machine) ": [
+1,
+18
+],
+"  Chest   Fly   (Machine) ": [
+9,
+2
+],
+"  Chest   Fly   (Suspension) ": [
+9,
+2
+],
+"  Chest   Press   (Machine) ": [
+0,
+22
+],
+"  Concentration   Curl ": [
+7,
+37
+],
+"  Deadlift   (Trap   bar) ": [
+8,
+17
+],
+"  Decline   Chest   Fly   (Dumbbell) ": [
+9,
+1
+],
+"  Decline   Push   Up ": [
+22,
+13
+],
+"  Iso-Lateral   High   Row   (Machine) ": [
+23,
+18
+],
+"  Jack   Knife   (Suspension) ": [
+6,
+83
+],
+"  Jump   Rope ": [
+2,
+6
+],
+"  Kettlebell   Shoulder   Press ": [
+24,
+15
+],
+"  Lateral   Leg   Raises ": [
+11,
+21
+],
+"  Lying   Neck   Curls ": [
+65534,
+0
+],
+"  Meadows   Rows   (Barbell) ": [
+23,
+13
+],
+"  Plate   Press ": [
+0,
+12
+],
+"  Plate   Squeeze   (Svend   Press) ": [
+0,
+12
+],
+"  Push   Press ": [
+24,
+3
+],
+"  Push   Up ": [
+22,
+77
+],
+"  Push   Up   -   Close   Grip ": [
+22,
+11
+],
+"  Reverse   Grip   Concentration   Curl ": [
+7,
+31
+],
+"  Romanian   Deadlift   (Barbell) ": [
+8,
+1
+],
+"  Seal   Row   (Dumbbell) ": [
+23,
+2
+],
+"  Seated   Leg   Curl   (Machine) ": [
+15,
+0
+],
+"  Seated   Overhead   Press   (Barbell) ": [
+24,
+16
+],
+"  Seated   Triceps   Press ": [
+30,
+20
+],
+"  Single   Arm   Cable   Crossover ": [
+9,
+0
+],
+"  Single   Arm   Tricep   Extension   (Dumbbell) ": [
+30,
+24
+],
+"  Single   Leg   Extensions ": [
+6,
+33
+],
+"  Single   Leg   Glute   Bridge ": [
+10,
+30
+],
+"  Single   Leg   Hip   Thrust ": [
+10,
+30
+],
+"  Single   Leg   Romanian   Deadlift   (Dumbbell) ": [
+8,
+14
+],
+"  Split   Squat   (Dumbbell) ": [
+17,
+28
+],
+"  Stair   Machine   (Floors) ": [
+2,
+65535
+],
+"  Standing   Y   Raise   (Cable) ": [
+14,
+10
+],
+"  Triceps   Extension   (Suspension) ": [
+30,
+5
+],
+"  Triceps   Pressdown ": [
+30,
+39
+],
+"---": [
+65534,
+0
+],
+"ASSISTED PISTOL SQUATS": [
+28,
+47
+],
+"Assisted Pistol Squats": [
+28,
+47
+],
+"BENCH DIP": [
+30,
+0
+],
+"BUTTERFLY (PEC DECK)": [
+9,
+2
+],
+"Bench Dip": [
+30,
+0
+],
+"Butterfly (Pec Deck)": [
+9,
+2
+],
+"CALF EXTENSION (MACHINE)": [
+1,
+18
+],
+"CHEST FLY (MACHINE)": [
+9,
+2
+],
+"CHEST FLY (SUSPENSION)": [
+9,
+2
+],
+"CHEST PRESS (MACHINE)": [
+0,
+22
+],
+"CONCENTRATION CURL": [
+7,
+37
+],
+"Calf Extension (Machine)": [
+1,
+18
+],
+"Chest Fly (Machine)": [
+9,
+2
+],
+"Chest Fly (Suspension)": [
+9,
+2
+],
+"Chest Press (Machine)": [
+0,
+22
+],
+"Concentration Curl": [
+7,
+37
+],
+"Curl à la Scott": [
+65534,
+0
+],
+"DEADLIFT (TRAP BAR)": [
+8,
+17
+],
+"DECLINE CHEST FLY (DUMBBELL)": [
+9,
+1
+],
+"DECLINE PUSH UP": [
+22,
+13
+],
+"Deadlift (Trap bar)": [
+8,
+17
+],
+"Decline Chest Fly (Dumbbell)": [
+9,
+1
+],
+"Decline Push Up": [
+22,
+13
+],
+"ISO-LATERAL HIGH ROW (MACHINE)": [
+23,
+18
+],
+"Iso-Lateral High Row (Machine)": [
+23,
+18
+],
+"JACK KNIFE (SUSPENSION)": [
+6,
+83
+],
+"JUMP ROPE": [
+2,
+6
+],
+"Jack Knife (Suspension)": [
+6,
+83
+],
+"Jump Rope": [
+2,
+6
+],
+"KETTLEBELL SHOULDER PRESS": [
+24,
+15
+],
+"Kettlebell Shoulder Press": [
+24,
+15
+],
+"LATERAL LEG RAISES": [
+11,
+21
+],
+"LYING NECK CURLS": [
+65534,
+0
+],
+"Lateral Leg Raises": [
+11,
+21
+],
+"Lying Neck Curls": [
+65534,
+0
+],
+"MEADOWS ROWS (BARBELL)": [
+23,
+13
+],
+"Meadows Rows (Barbell)": [
+23,
+13
+],
+"PLATE PRESS": [
+0,
+12
+],
+"PLATE SQUEEZE (SVEND PRESS)": [
+0,
+12
+],
+"PUSH PRESS": [
+24,
+3
+],
+"PUSH UP": [
+22,
+77
+],
+"PUSH UP - CLOSE GRIP": [
+22,
+11
+],
+"Palloff Press": [
+65534,
+0
+],
+"Plate Press": [
+0,
+12
+],
+"Plate Squeeze (Svend Press)": [
+0,
+12
+],
+"Push Press": [
+24,
+3
+],
+"Push Up": [
+22,
+77
+],
+"Push Up - Close Grip": [
+22,
+11
+],
+"Push Up – Close Grip": [
+22,
+11
+],
+"REVERSE GRIP CONCENTRATION CURL": [
+7,
+31
+],
+"ROMANIAN DEADLIFT (BARBELL)": [
+8,
+1
+],
+"Reverse Grip Concentration Curl": [
+7,
+31
+],
+"Romanian Deadlift (Barbell)": [
+8,
+1
+],
+"SEAL ROW (DUMBBELL)": [
+23,
+2
+],
+"SEATED LEG CURL (MACHINE)": [
+15,
+0
+],
+"SEATED OVERHEAD PRESS (BARBELL)": [
+24,
+16
+],
+"SEATED TRICEPS PRESS": [
+30,
+20
+],
+"SINGLE ARM CABLE CROSSOVER": [
+9,
+0
+],
+"SINGLE ARM TRICEP EXTENSION (DUMBBELL)": [
+30,
+24
+],
+"SINGLE LEG EXTENSIONS": [
+6,
+33
+],
+"SINGLE LEG GLUTE BRIDGE": [
+10,
+30
+],
+"SINGLE LEG HIP THRUST": [
+10,
+30
+],
+"SINGLE LEG ROMANIAN DEADLIFT (DUMBBELL)": [
+8,
+14
+],
+"SPLIT SQUAT (DUMBBELL)": [
+17,
+28
+],
+"STAIR MACHINE (FLOORS)": [
+2,
+65535
+],
+"STANDING Y RAISE (CABLE)": [
+14,
+10
+],
+"Seal Row (Dumbbell)": [
+23,
+2
+],
+"Seated Leg Curl (Machine)": [
+15,
+0
+],
+"Seated Overhead Press (Barbell)": [
+24,
+16
+],
+"Seated Triceps Press": [
+30,
+20
+],
+"Single Arm Cable Crossover": [
+9,
+0
+],
+"Single Arm Tricep Extension (Dumbbell)": [
+30,
+24
+],
+"Single Leg Extensions": [
+6,
+33
+],
+"Single Leg Glute Bridge": [
+10,
+30
+],
+"Single Leg Hip Thrust": [
+10,
+30
+],
+"Single Leg Romanian Deadlift (Dumbbell)": [
+8,
+14
+],
+"Split Squat (Dumbbell)": [
+17,
+28
+],
+"Stair Machine (Floors)": [
+2,
+65535
+],
+"Standing Y Raise (Cable)": [
+14,
+10
+],
+"TRICEPS EXTENSION (SUSPENSION)": [
+30,
+5
+],
+"TRICEPS PRESSDOWN": [
+30,
+39
+],
+"Totally Made Up Lift": [
+65534,
+0
+],
+"Triceps Extension (Suspension)": [
+30,
+5
+],
+"Triceps Pressdown": [
+30,
+39
+]
+}

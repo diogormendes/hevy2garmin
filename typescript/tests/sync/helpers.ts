@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type { GarminGateway, MarkSyncedOpts, PendingRecord, PendingUpdate, SyncStore } from "../../src/sync";
+import type { CandidateActivity } from "../../src/merge-match";
 
 /**
  * An in-memory SyncStore whose every method is a vi.fn, so tests assert on
@@ -22,7 +23,13 @@ export class MemoryStore implements SyncStore {
   loadPendingIds = vi.fn(async () => new Set(this.pendingIds));
   getPending = vi.fn(async (hevyId: string) => this.pending.get(hevyId) ?? null);
   claimPending = vi.fn(async (_hevyId: string, _payload: Record<string, unknown>) => this.claimResult);
-  updatePending = vi.fn(async (_hevyId: string, _fields: PendingUpdate) => {});
+  // Actually merges, rather than recording the call and discarding it. A
+  // no-op here hides every read-after-write bug: code that updates a row and
+  // then re-reads it sees the stale version and the test still passes.
+  updatePending = vi.fn(async (hevyId: string, fields: PendingUpdate) => {
+    const row = this.pending.get(hevyId);
+    if (row) this.pending.set(hevyId, { ...row, ...fields } as typeof row);
+  });
   deletePending = vi.fn(async (_hevyId: string) => true);
   completePending = vi.fn(async (_hevyId: string, _opts: MarkSyncedOpts) => {});
   markSynced = vi.fn(async (_hevyId: string, _opts: MarkSyncedOpts) => {});
@@ -35,6 +42,18 @@ export function mockGateway() {
     upload: vi.fn(async (_fit: Uint8Array, _start?: string) => ({ uploadId: 99, activityId: 555 as number | null })),
     rename: vi.fn(async (_id: number, _name: string) => {}),
     describe: vi.fn(async (_id: number, _text: string) => {}),
+    // Read before every upload for the pre-upload snapshot, not only for merge.
+    // Empty here because these fixtures are a fresh workout with nothing on
+    // Garmin yet, so the uploaded activity is correctly treated as new.
+    activitiesByDate: vi.fn(async (_from: string, _to: string) => [] as unknown[]),
+    // The rest of the gateway. A partial fake was fine while the paths under
+    // test never reached these, but retry now runs the real sync, which can.
+    exerciseSets: vi.fn(async (_id: number) => ({ exerciseSets: [] })),
+    putExerciseSets: vi.fn(async (_id: number, _payload: unknown) => {}),
+    deleteActivity: vi.fn(async (_id: number) => {}),
+    activityFit: vi.fn(async (_id: number) => null),
+    // Read only by a resync, which looks the stored activity up by id.
+    activity: vi.fn(async (_id: number) => null as CandidateActivity | null),
   } satisfies GarminGateway;
 }
 

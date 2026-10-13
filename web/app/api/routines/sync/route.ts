@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { fetchHevyRoutines } from "@/lib/hevy-routines";
-import { syncRoutine } from "@/lib/garmin-routine-sync";
+import { syncRoutine, reconcileMissingRoutineWorkouts } from "@/lib/garmin-routine-sync";
+import { listGarminWorkouts } from "@/lib/garmin-workout-library";
+import { getGarminClient } from "@/lib/garmin-upload";
 import { getDb } from "@/lib/db";
 import { verifySession, SESSION_COOKIE, authEnabled } from "@/lib/auth";
 
@@ -30,6 +32,30 @@ export async function POST(request: Request) {
     try { const out = await syncRoutine(r, sql); results.push({ id: String(r.id), title, status: out.status, garminWorkoutId: out.garminWorkoutId == null ? null : String(out.garminWorkoutId), error: out.error ?? undefined }); }
     catch (err) { results.push({ id: String(r.id), title, status: "error", error: err instanceof Error ? err.message : String(err) }); }
   }
-  const synced = results.filter((x) => x.status === "synced").length; const failed = results.filter((x) => x.status === "error").length;
-  return NextResponse.json({ ok: failed === 0, total: results.length, synced, failed, results });
+  // Ask Garmin what it still has, and flag routines whose planned workout the
+  // user deleted there. `null` means the listing FAILED, and the reconcile then
+  // does nothing: treating an error as "everything was deleted" would flip every
+  // routine on the dashboard to missing at once (#607).
+  let library: Awaited<ReturnType<typeof listGarminWorkouts>> | null = null;
+  try {
+    library = await listGarminWorkouts(await getGarminClient());
+  } catch {
+    library = null;
+  }
+  const reconciled = await reconcileMissingRoutineWorkouts(sql, library);
+
+  const synced = results.filter((x) => x.status === "synced").length;
+  const skipped = results.filter((x) => x.status === "skipped").length;
+  const failed = results.filter((x) => x.status === "error").length;
+  return NextResponse.json({
+    ok: failed === 0,
+    total: results.length,
+    synced,
+    // Unchanged routines are no longer recreated, so a run that does nothing is
+    // the normal outcome rather than a sign something went wrong (#603).
+    skipped,
+    failed,
+    reconciled,
+    results,
+  });
 }

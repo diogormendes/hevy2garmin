@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
+import { resyncedLabel } from "@/lib/resynced";
 
 // Queries the live hevy2garmin Postgres per request — never at build time.
 export const dynamic = "force-dynamic";
@@ -8,6 +9,8 @@ interface HistoryRow {
   hevy_id: string;
   title: string;
   synced_at: string | null;
+  // Set when a resync rewrote the row; synced_at stays the original (#709).
+  resynced_at: string | null;
   calories: number | null;
   avg_hr: number | null;
   garmin_activity_id: string | null;
@@ -36,7 +39,7 @@ async function loadHistory(): Promise<HistoryData> {
       () => [] as Array<{ total: number }>,
     ),
     sql`
-      SELECT hevy_id, title, synced_at, calories, avg_hr,
+      SELECT hevy_id, title, synced_at, resynced_at, calories, avg_hr,
              garmin_activity_id, COALESCE(status, 'success') AS status
       FROM synced_workouts
       ORDER BY synced_at DESC
@@ -51,6 +54,7 @@ async function loadHistory(): Promise<HistoryData> {
       hevy_id: r.hevy_id,
       title: r.title ?? "",
       synced_at: r.synced_at ?? null,
+      resynced_at: r.resynced_at ?? null,
       calories: r.calories != null ? Number(r.calories) : null,
       avg_hr: r.avg_hr != null ? Number(r.avg_hr) : null,
       garmin_activity_id: r.garmin_activity_id ?? null,
@@ -70,6 +74,12 @@ function fmtDate(value: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/** When a resync last rewrote the row, on its own line under the sync date. */
+function ResyncedNote({ at }: { at: string | null }) {
+  const label = resyncedLabel(at, fmtDate);
+  return label ? <div className="text-xs">{label}</div> : null;
 }
 
 function statusLabel(status: string): string {
@@ -171,6 +181,7 @@ export default async function HistoryPage() {
                 <tr key={r.hevy_id}>
                   <td className="whitespace-nowrap px-4 py-2 tabular-nums text-text-muted">
                     {fmtDate(r.synced_at)}
+                    <ResyncedNote at={r.resynced_at} />
                   </td>
                   <td className="px-4 py-2 font-medium text-text">
                     {r.title || "Untitled workout"}

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-
-from unittest.mock import patch
 
 from hevy2garmin.db_sqlite import SQLiteDatabase
 
@@ -21,9 +20,11 @@ class TestSQLiteReadOnlyFilesystem:
 
     def test_readonly_mkdir_raises_actionable_error(self, tmp_path: Path) -> None:
         db = SQLiteDatabase(tmp_path / "nope" / "sync.db")
-        with patch.object(Path, "mkdir", side_effect=OSError("read-only file system")):
-            with pytest.raises(RuntimeError, match="read-only filesystem"):
-                db._get_conn()
+        with (
+            patch.object(Path, "mkdir", side_effect=OSError("read-only file system")),
+            pytest.raises(RuntimeError, match="read-only filesystem"),
+        ):
+            db._get_conn()
 
 
 def _make_db(tmp_path):
@@ -31,6 +32,7 @@ def _make_db(tmp_path):
     database_url = os.environ.get("DATABASE_URL")
     if database_url:
         from hevy2garmin.db_postgres import PostgresDatabase
+
         db = PostgresDatabase(database_url)
         # Clean tables for test isolation
         with db._get_conn() as conn:
@@ -53,8 +55,9 @@ class TestRoutineTracking:
 
     def test_mark_then_check(self, tmp_path: Path) -> None:
         db = _make_db(tmp_path)
-        db.mark_routine_synced("r1", garmin_workout_id="w9", title="Push",
-                               hevy_updated_at="2026-01-01T00:00:00Z")
+        db.mark_routine_synced(
+            "r1", garmin_workout_id="w9", title="Push", hevy_updated_at="2026-01-01T00:00:00Z"
+        )
         assert db.is_routine_synced("r1") is True
         record = db.get_synced_routine("r1")
         assert record["garmin_workout_id"] == "w9"
@@ -83,8 +86,7 @@ class TestRoutineTracking:
 
     def test_set_routine_status_only_touches_status(self, tmp_path: Path) -> None:
         db = _make_db(tmp_path)
-        db.mark_routine_synced("r1", garmin_workout_id="w1", title="Push",
-                               content_hash="h1")
+        db.mark_routine_synced("r1", garmin_workout_id="w1", title="Push", content_hash="h1")
         db.set_routine_status("r1", "missing_on_garmin")
         record = db.get_synced_routine("r1")
         assert record["status"] == "missing_on_garmin"
@@ -98,8 +100,9 @@ class TestRoutineTracking:
         db = _make_db(tmp_path)
         assert db.list_synced_routines() == []
         db.mark_routine_synced("r1", garmin_workout_id="w1", title="Push")
-        db.mark_routine_synced("r2", garmin_workout_id="w2", title="Pull",
-                               status="schedule_pending")
+        db.mark_routine_synced(
+            "r2", garmin_workout_id="w2", title="Pull", status="schedule_pending"
+        )
         rows = {r["hevy_routine_id"]: r for r in db.list_synced_routines()}
         assert set(rows) == {"r1", "r2"}
         assert rows["r1"]["garmin_workout_id"] == "w1"
@@ -129,7 +132,7 @@ class TestRoutineTracking:
         db = _make_db(tmp_path)
         db.mark_routine_synced("r1", garmin_workout_id="w1", title="Push")
         db.mark_routine_synced("r2", garmin_workout_id="w2", title="Pull")
-        db.add_routine_schedule("r1", "s-past", "2026-06-01")   # past → excluded
+        db.add_routine_schedule("r1", "s-past", "2026-06-01")  # past → excluded
         db.add_routine_schedule("r1", "s-b", "2026-07-27")
         db.add_routine_schedule("r2", "s-a", "2026-07-20")
         today = "2026-07-15"
@@ -191,8 +194,12 @@ class TestRoutineTracking:
     def test_routine_stats_counts_synced_and_scheduled(self, tmp_path: Path) -> None:
         db = _make_db(tmp_path)
         db.mark_routine_synced("r1", garmin_workout_id="w1", title="Push")
-        db.mark_routine_synced("r2", garmin_workout_id="w2", title="Pull", scheduled_date="2026-07-20")
-        db.mark_routine_synced("r3", garmin_workout_id="w3", title="Legs", scheduled_date="2026-07-21")
+        db.mark_routine_synced(
+            "r2", garmin_workout_id="w2", title="Pull", scheduled_date="2026-07-20"
+        )
+        db.mark_routine_synced(
+            "r3", garmin_workout_id="w3", title="Legs", scheduled_date="2026-07-21"
+        )
         assert db.get_routine_stats() == {"synced": 3, "scheduled": 2}
 
     def test_recent_synced_routines_fields_and_limit(self, tmp_path: Path) -> None:
@@ -202,8 +209,13 @@ class TestRoutineTracking:
         recent = db.get_recent_synced_routines(5)
         assert len(recent) == 5
         sample = recent[0]
-        assert set(sample) >= {"hevy_routine_id", "title", "scheduled_date",
-                               "garmin_workout_id", "synced_at"}
+        assert set(sample) >= {
+            "hevy_routine_id",
+            "title",
+            "scheduled_date",
+            "garmin_workout_id",
+            "synced_at",
+        }
 
     def test_recent_synced_routines_empty(self, tmp_path: Path) -> None:
         db = _make_db(tmp_path)
@@ -230,7 +242,9 @@ class TestSyncTracking:
     def test_recent_ordering(self, tmp_path: Path) -> None:
         db = SQLiteDatabase(tmp_path / "test.db")
         db.mark_synced("w1", title="First")
-        import time; time.sleep(1.1)  # ensure different timestamp
+        import time
+
+        time.sleep(1.1)  # ensure different timestamp
         db.mark_synced("w2", title="Second")
         recent = db.get_recent_synced(limit=2)
         assert len(recent) == 2
@@ -353,6 +367,7 @@ class TestDispatcher:
         """Without DATABASE_URL, get_db() returns SQLiteDatabase."""
         monkeypatch.delenv("DATABASE_URL", raising=False)
         from hevy2garmin import db
+
         db.reset()
         instance = db.get_db()
         assert isinstance(instance, SQLiteDatabase)
@@ -362,6 +377,7 @@ class TestDispatcher:
         """reset() forces a fresh instance on next get_db()."""
         monkeypatch.delenv("DATABASE_URL", raising=False)
         from hevy2garmin import db
+
         db.reset()
         first = db.get_db()
         db.reset()
@@ -373,6 +389,7 @@ class TestDispatcher:
         """Module-level functions silently accept db_path= for backwards compat."""
         monkeypatch.delenv("DATABASE_URL", raising=False)
         from hevy2garmin import db
+
         db.reset()
         # Patch the singleton to use tmp_path
         db._instance = SQLiteDatabase(tmp_path / "test.db")

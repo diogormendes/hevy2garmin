@@ -33,3 +33,20 @@ describe("GET /api/hevy-routines", () => {
     expect(json.error).toContain("Hevy");
   });
 });
+
+/** Same as /api/candidates: a demo has no Hevy to ask (#634 follow-up). */
+describe("GET /api/hevy-routines in demo mode", () => {
+  it("says so plainly and never asks Hevy", async () => {
+    process.env.DEMO_MODE = "1";
+    try {
+      const res = await GET();
+      const json = await res.json();
+      expect(res.status).toBe(200);
+      expect(json.routines).toEqual([]);
+      expect(json.demo).toBe(true);
+      expect(json.error).toBeUndefined();
+    } finally {
+      delete process.env.DEMO_MODE;
+    }
+  });
+});

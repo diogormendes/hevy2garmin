@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,8 +13,10 @@ class TestMergeModeFilePersistence:
 
     def test_merge_mode_false_persists(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.json"
-        with patch("hevy2garmin.config.CONFIG_DIR", tmp_path), \
-             patch("hevy2garmin.config.CONFIG_FILE", config_file):
+        with (
+            patch("hevy2garmin.config.CONFIG_DIR", tmp_path),
+            patch("hevy2garmin.config.CONFIG_FILE", config_file),
+        ):
             config = load_config()
             config["merge_mode"] = False
             save_config(config)
@@ -25,8 +26,10 @@ class TestMergeModeFilePersistence:
 
     def test_merge_mode_true_persists(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.json"
-        with patch("hevy2garmin.config.CONFIG_DIR", tmp_path), \
-             patch("hevy2garmin.config.CONFIG_FILE", config_file):
+        with (
+            patch("hevy2garmin.config.CONFIG_DIR", tmp_path),
+            patch("hevy2garmin.config.CONFIG_FILE", config_file),
+        ):
             config = load_config()
             config["merge_mode"] = True
             save_config(config)
@@ -48,14 +51,20 @@ class TestMergeModeFilePersistence:
 
     def test_merge_activity_types_persists(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.json"
-        with patch("hevy2garmin.config.CONFIG_DIR", tmp_path), \
-             patch("hevy2garmin.config.CONFIG_FILE", config_file):
+        with (
+            patch("hevy2garmin.config.CONFIG_DIR", tmp_path),
+            patch("hevy2garmin.config.CONFIG_FILE", config_file),
+        ):
             config = load_config()
             config["merge_activity_types"] = ["strength_training", "bouldering", "indoor_climbing"]
             save_config(config)
 
             reloaded = load_config()
-            assert reloaded["merge_activity_types"] == ["strength_training", "bouldering", "indoor_climbing"]
+            assert reloaded["merge_activity_types"] == [
+                "strength_training",
+                "bouldering",
+                "indoor_climbing",
+            ]
 
 
 class TestMergeModeDbPersistence:
@@ -67,6 +76,7 @@ class TestMergeModeDbPersistence:
         Each row dict: {"key": "...", "value": {...}}
         The mock replaces the Postgres cursor that load_config queries.
         """
+
         class FakeCursor:
             def __init__(self, rows):
                 self._rows = rows
@@ -115,37 +125,67 @@ class TestMergeModeDbPersistence:
     def _patch_db(self, tmp_path, fake_db):
         """Context manager stack to patch config file + DB layer for load_config."""
         from contextlib import ExitStack
+
         stack = ExitStack()
         stack.enter_context(patch("hevy2garmin.config.CONFIG_FILE", tmp_path / "missing.json"))
-        stack.enter_context(patch("hevy2garmin.db.get_database_url", return_value="postgres://fake"))
+        stack.enter_context(
+            patch("hevy2garmin.db.get_database_url", return_value="postgres://fake")
+        )
         stack.enter_context(patch("hevy2garmin.db.get_db", return_value=fake_db))
         return stack
 
     def test_merge_mode_false_loaded_from_db(self, tmp_path: Path) -> None:
-        fake_db = self._make_db_loader([
-            {"key": "merge_settings", "value": {"merge_mode": False, "description_enabled": True,
-                                                  "merge_overlap_pct": 70, "merge_max_drift_min": 20}},
-        ])
+        fake_db = self._make_db_loader(
+            [
+                {
+                    "key": "merge_settings",
+                    "value": {
+                        "merge_mode": False,
+                        "description_enabled": True,
+                        "merge_overlap_pct": 70,
+                        "merge_max_drift_min": 20,
+                    },
+                },
+            ]
+        )
 
         with self._patch_db(tmp_path, fake_db):
             config = load_config()
             assert config.get("merge_mode", True) is False
 
     def test_merge_mode_true_loaded_from_db(self, tmp_path: Path) -> None:
-        fake_db = self._make_db_loader([
-            {"key": "merge_settings", "value": {"merge_mode": True, "description_enabled": True,
-                                                  "merge_overlap_pct": 70, "merge_max_drift_min": 20}},
-        ])
+        fake_db = self._make_db_loader(
+            [
+                {
+                    "key": "merge_settings",
+                    "value": {
+                        "merge_mode": True,
+                        "description_enabled": True,
+                        "merge_overlap_pct": 70,
+                        "merge_max_drift_min": 20,
+                    },
+                },
+            ]
+        )
 
         with self._patch_db(tmp_path, fake_db):
             config = load_config()
             assert config.get("merge_mode", True) is True
 
     def test_all_merge_settings_unpacked(self, tmp_path: Path) -> None:
-        fake_db = self._make_db_loader([
-            {"key": "merge_settings", "value": {"merge_mode": False, "description_enabled": False,
-                                                  "merge_overlap_pct": 85, "merge_max_drift_min": 30}},
-        ])
+        fake_db = self._make_db_loader(
+            [
+                {
+                    "key": "merge_settings",
+                    "value": {
+                        "merge_mode": False,
+                        "description_enabled": False,
+                        "merge_overlap_pct": 85,
+                        "merge_max_drift_min": 30,
+                    },
+                },
+            ]
+        )
 
         with self._patch_db(tmp_path, fake_db):
             config = load_config()
@@ -155,11 +195,20 @@ class TestMergeModeDbPersistence:
             assert config["merge_max_drift_min"] == 30
 
     def test_merge_activity_types_loaded_from_db(self, tmp_path: Path) -> None:
-        fake_db = self._make_db_loader([
-            {"key": "merge_settings", "value": {"merge_mode": True, "description_enabled": True,
-                                                  "merge_overlap_pct": 70, "merge_max_drift_min": 20,
-                                                  "merge_activity_types": ["strength_training", "bouldering"]}},
-        ])
+        fake_db = self._make_db_loader(
+            [
+                {
+                    "key": "merge_settings",
+                    "value": {
+                        "merge_mode": True,
+                        "description_enabled": True,
+                        "merge_overlap_pct": 70,
+                        "merge_max_drift_min": 20,
+                        "merge_activity_types": ["strength_training", "bouldering"],
+                    },
+                },
+            ]
+        )
 
         with self._patch_db(tmp_path, fake_db):
             config = load_config()

@@ -44,8 +44,9 @@ def run_once() -> int | None:
     hevy_auth_failed = False
     try:
         result = sync(limit=10, dry_run=False, record_log=False, respect_grace=True)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the scheduler records any failure and keeps running
         from hevy2garmin.hevy import HevyAuthError
+
         if isinstance(e, HevyAuthError):
             logger.error("Auto-sync: Hevy API key invalid — disabling auto-sync. %s", e)
             config["auto_sync"]["enabled"] = False
@@ -54,18 +55,31 @@ def run_once() -> int | None:
             if db.get_database_url():
                 try:
                     import json as _json
+
                     _db = db.get_db()
-                    if hasattr(_db, '_get_conn'):
+                    if hasattr(_db, "_get_conn"):
                         with _db._get_conn() as conn:
                             with conn.cursor() as cur:
-                                cur.execute("""
+                                cur.execute(
+                                    """
                                     INSERT INTO platform_credentials (platform, auth_type, credentials, status)
                                     VALUES ('auto_sync', 'config', %s, 'active')
                                     ON CONFLICT (platform) DO UPDATE SET credentials = EXCLUDED.credentials
-                                """, (_json.dumps({"enabled": False, "interval_minutes": config.get("auto_sync", {}).get("interval_minutes", 120)}),))
+                                """,
+                                    (
+                                        _json.dumps(
+                                            {
+                                                "enabled": False,
+                                                "interval_minutes": config.get("auto_sync", {}).get(
+                                                    "interval_minutes", 120
+                                                ),
+                                            }
+                                        ),
+                                    ),
+                                )
                             conn.commit()
-                except Exception:
-                    pass
+                except Exception:  # either DB backend; the setting is best-effort
+                    logger.debug("could not persist auto_sync=false", exc_info=True)
             hevy_auth_failed = True
         result = {"synced": 0, "skipped": 0, "failed": 1, "error": str(e)}
     finally:
@@ -120,18 +134,24 @@ def status() -> dict[str, Any]:
     if db.get_database_url():
         try:
             import json as _json
+
             _db = db.get_db()
-            if hasattr(_db, '_get_conn'):
-                with _db._get_conn() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT credentials FROM platform_credentials WHERE platform = 'auto_sync' LIMIT 1")
-                        row = cur.fetchone()
-                        if row and row.get("credentials"):
-                            creds = row["credentials"] if isinstance(row["credentials"], dict) else _json.loads(row["credentials"])
-                            enabled = creds.get("enabled", False)
-                            interval = creds.get("interval_minutes", 120)
-        except Exception:
-            pass
+            if hasattr(_db, "_get_conn"):
+                with _db._get_conn() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT credentials FROM platform_credentials WHERE platform = 'auto_sync' LIMIT 1"
+                    )
+                    row = cur.fetchone()
+                    if row and row.get("credentials"):
+                        creds = (
+                            row["credentials"]
+                            if isinstance(row["credentials"], dict)
+                            else _json.loads(row["credentials"])
+                        )
+                        enabled = creds.get("enabled", False)
+                        interval = creds.get("interval_minutes", 120)
+        except Exception:  # either DB backend; defaults apply when the row cannot be read
+            logger.debug("could not read auto_sync settings", exc_info=True)
 
     status_dict: dict[str, Any] = {
         "enabled": enabled,

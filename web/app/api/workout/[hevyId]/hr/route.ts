@@ -10,9 +10,15 @@ export const runtime = "nodejs";
  *
  * Returns the cached heart-rate timeline for a workout's matched Garmin
  * activity from the `hr_cache` table (data.samples) — mirroring
- * db.get_cached_hr. Read-only: it never calls Garmin. The sync/cron job is what
- * populates the cache, so this returns `{ samples: null }` for workouts that
- * haven't been fetched yet.
+ * db.get_cached_hr. Read-only: it never calls Garmin.
+ *
+ * The sync populates the cache whenever it resolves heart rate from a source
+ * other than the cache itself, so this returns `{ samples: null }` for workouts
+ * that have not been synced yet, or synced without any HR being found.
+ *
+ * That was not true until #612: nothing wrote this table outside the demo seed,
+ * so on a real install the chart was always empty and this comment claimed
+ * otherwise.
  */
 export async function GET(
   _request: Request,

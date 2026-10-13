@@ -40,8 +40,10 @@ class TestLoadConfig:
 
     def test_save_load_roundtrip(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.json"
-        with patch("hevy2garmin.config.CONFIG_DIR", tmp_path), \
-             patch("hevy2garmin.config.CONFIG_FILE", config_file):
+        with (
+            patch("hevy2garmin.config.CONFIG_DIR", tmp_path),
+            patch("hevy2garmin.config.CONFIG_FILE", config_file),
+        ):
             original = load_config()
             original["hevy_api_key"] = "test-key-123"
             original["user_profile"]["weight_kg"] = 75.5
@@ -54,7 +56,9 @@ class TestLoadConfig:
     def test_deep_merge_preserves_defaults(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.json"
         # Save partial config (missing timing)
-        config_file.write_text(json.dumps({"hevy_api_key": "key", "user_profile": {"weight_kg": 90}}))
+        config_file.write_text(
+            json.dumps({"hevy_api_key": "key", "user_profile": {"weight_kg": 90}})
+        )
 
         with patch("hevy2garmin.config.CONFIG_FILE", config_file):
             config = load_config()
@@ -77,11 +81,15 @@ class TestLoadConfig:
         # normalized on read, so it can't break the API call and an existing bad
         # value self-heals on the next load.
         config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps({
-            "hevy_api_key": "  abc123\n",
-            "garmin_email": "\tuser@example.com ",
-            "garmin_password": " pw ",
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "hevy_api_key": "  abc123\n",
+                    "garmin_email": "\tuser@example.com ",
+                    "garmin_password": " pw ",
+                }
+            )
+        )
         with patch("hevy2garmin.config.CONFIG_FILE", config_file):
             config = load_config()
             assert config["hevy_api_key"] == "abc123"
@@ -128,10 +136,12 @@ class TestSaveConfigCloud:
             "timing": {"working_set_seconds": 45},
             "hr_fusion": {"enabled": True},
         }
-        with patch("hevy2garmin.config.CONFIG_DIR", tmp_path), \
-             patch("hevy2garmin.config.CONFIG_FILE", tmp_path / "config.json"), \
-             patch("hevy2garmin.db.get_database_url", return_value="postgresql://x"), \
-             patch("hevy2garmin.db.get_db", return_value=fake_db):
+        with (
+            patch("hevy2garmin.config.CONFIG_DIR", tmp_path),
+            patch("hevy2garmin.config.CONFIG_FILE", tmp_path / "config.json"),
+            patch("hevy2garmin.db.get_database_url", return_value="postgresql://x"),
+            patch("hevy2garmin.db.get_db", return_value=fake_db),
+        ):
             save_config(cfg)
 
         written = {c.args[0]: c.args[1] for c in fake_db.set_app_config.call_args_list}
@@ -140,20 +150,24 @@ class TestSaveConfigCloud:
 
     def test_no_db_write_when_local(self, tmp_path: Path) -> None:
         fake_db = MagicMock()
-        with patch("hevy2garmin.config.CONFIG_DIR", tmp_path), \
-             patch("hevy2garmin.config.CONFIG_FILE", tmp_path / "config.json"), \
-             patch("hevy2garmin.db.get_database_url", return_value=None), \
-             patch("hevy2garmin.db.get_db", return_value=fake_db):
+        with (
+            patch("hevy2garmin.config.CONFIG_DIR", tmp_path),
+            patch("hevy2garmin.config.CONFIG_FILE", tmp_path / "config.json"),
+            patch("hevy2garmin.db.get_database_url", return_value=None),
+            patch("hevy2garmin.db.get_db", return_value=fake_db),
+        ):
             save_config({"user_profile": {"weight_kg": 80.0}})
         fake_db.set_app_config.assert_not_called()
 
     def test_db_failure_does_not_raise(self, tmp_path: Path) -> None:
         fake_db = MagicMock()
         fake_db.set_app_config.side_effect = RuntimeError("db down")
-        with patch("hevy2garmin.config.CONFIG_DIR", tmp_path), \
-             patch("hevy2garmin.config.CONFIG_FILE", tmp_path / "config.json"), \
-             patch("hevy2garmin.db.get_database_url", return_value="postgresql://x"), \
-             patch("hevy2garmin.db.get_db", return_value=fake_db):
+        with (
+            patch("hevy2garmin.config.CONFIG_DIR", tmp_path),
+            patch("hevy2garmin.config.CONFIG_FILE", tmp_path / "config.json"),
+            patch("hevy2garmin.db.get_database_url", return_value="postgresql://x"),
+            patch("hevy2garmin.db.get_db", return_value=fake_db),
+        ):
             # Must not propagate — settings save should never 500 on a DB hiccup
             save_config({"user_profile": {"weight_kg": 80.0}})
 

@@ -39,7 +39,9 @@ def acquire_sync_lock() -> bool:
         return True
     # Check if the lock has been held too long (hung sync)
     if _sync_lock_acquired_at and (time.time() - _sync_lock_acquired_at) > _SYNC_LOCK_TIMEOUT:
-        logger.warning("Sync lock held for >%ds — force-releasing (likely hung)", _SYNC_LOCK_TIMEOUT)
+        logger.warning(
+            "Sync lock held for >%ds — force-releasing (likely hung)", _SYNC_LOCK_TIMEOUT
+        )
         try:
             _sync_executing.release()
         except RuntimeError:

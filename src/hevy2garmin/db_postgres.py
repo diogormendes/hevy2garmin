@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
-from hevy2garmin._isotime import parse_iso
 
+from hevy2garmin._isotime import parse_iso
 from hevy2garmin.db_interface import Database
 
 
@@ -36,11 +35,11 @@ class PostgresDatabase(Database):
             try:
                 self._conn_cache.cursor().execute("SELECT 1")
                 return self._conn_cache
-            except Exception:
+            except psycopg2.Error:
                 try:
                     self._conn_cache.close()
-                except Exception:
-                    pass
+                except psycopg2.Error:
+                    pass  # the connection is being discarded anyway
                 self._conn_cache = None
 
         conn = psycopg2.connect(self.database_url, cursor_factory=RealDictCursor)
@@ -131,11 +130,21 @@ class PostgresDatabase(Database):
                         subcategory INTEGER NOT NULL DEFAULT 0
                     )
                 """)
-                cur.execute("ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS hevy_updated_at TEXT")
-                cur.execute("ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS sync_method TEXT DEFAULT 'upload'")
-                cur.execute("ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolution_reason TEXT")
-                cur.execute("ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ")
-                cur.execute("ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolution_source TEXT")
+                cur.execute(
+                    "ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS hevy_updated_at TEXT"
+                )
+                cur.execute(
+                    "ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS sync_method TEXT DEFAULT 'upload'"
+                )
+                cur.execute(
+                    "ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolution_reason TEXT"
+                )
+                cur.execute(
+                    "ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ"
+                )
+                cur.execute(
+                    "ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolution_source TEXT"
+                )
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS app_cache (
                         key TEXT PRIMARY KEY,
@@ -155,7 +164,9 @@ class PostgresDatabase(Database):
                         status VARCHAR(20) DEFAULT 'success'
                     )
                 """)
-                cur.execute("ALTER TABLE synced_routines ADD COLUMN IF NOT EXISTS content_hash TEXT")
+                cur.execute(
+                    "ALTER TABLE synced_routines ADD COLUMN IF NOT EXISTS content_hash TEXT"
+                )
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS routine_schedules (
                         hevy_routine_id TEXT NOT NULL,
@@ -167,42 +178,38 @@ class PostgresDatabase(Database):
             conn.commit()
 
     def is_synced(self, hevy_id: str) -> bool:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM synced_workouts WHERE hevy_id = %s", (hevy_id,))
-                return cur.fetchone() is not None
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM synced_workouts WHERE hevy_id = %s", (hevy_id,))
+            return cur.fetchone() is not None
 
     def get_garmin_id(self, hevy_id: str) -> str | None:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT garmin_activity_id FROM synced_workouts WHERE hevy_id = %s",
-                    (hevy_id,),
-                )
-                row = cur.fetchone()
-                return row["garmin_activity_id"] if row else None
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT garmin_activity_id FROM synced_workouts WHERE hevy_id = %s",
+                (hevy_id,),
+            )
+            row = cur.fetchone()
+            return row["garmin_activity_id"] if row else None
 
     # ── Routine → Garmin planned-workout tracking ───────────────────────────
     def get_synced_routine(self, hevy_routine_id: str) -> dict | None:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT hevy_routine_id, garmin_workout_id, title, hevy_updated_at, "
-                    "scheduled_date, content_hash, synced_at, status FROM synced_routines "
-                    "WHERE hevy_routine_id = %s",
-                    (hevy_routine_id,),
-                )
-                row = cur.fetchone()
-                return dict(row) if row else None
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT hevy_routine_id, garmin_workout_id, title, hevy_updated_at, "
+                "scheduled_date, content_hash, synced_at, status FROM synced_routines "
+                "WHERE hevy_routine_id = %s",
+                (hevy_routine_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
 
     def list_synced_routines(self) -> list[dict]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT hevy_routine_id, garmin_workout_id, title, hevy_updated_at, "
-                    "scheduled_date, content_hash, synced_at, status FROM synced_routines"
-                )
-                return [dict(row) for row in cur.fetchall()]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT hevy_routine_id, garmin_workout_id, title, hevy_updated_at, "
+                "scheduled_date, content_hash, synced_at, status FROM synced_routines"
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def set_routine_status(self, hevy_routine_id: str, status: str) -> None:
         with self._get_conn() as conn:
@@ -247,7 +254,15 @@ class PostgresDatabase(Database):
                         synced_at = NOW(),
                         status = EXCLUDED.status
                     """,
-                    (hevy_routine_id, garmin_workout_id, title, hevy_updated_at, scheduled_date, content_hash, status),
+                    (
+                        hevy_routine_id,
+                        garmin_workout_id,
+                        title,
+                        hevy_updated_at,
+                        scheduled_date,
+                        content_hash,
+                        status,
+                    ),
                 )
             conn.commit()
 
@@ -277,24 +292,22 @@ class PostgresDatabase(Database):
             conn.commit()
 
     def get_routine_schedule_ids(self, hevy_routine_id: str) -> list[str]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT schedule_id FROM routine_schedules WHERE hevy_routine_id = %s",
-                    (hevy_routine_id,),
-                )
-                return [r["schedule_id"] for r in cur.fetchall()]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT schedule_id FROM routine_schedules WHERE hevy_routine_id = %s",
+                (hevy_routine_id,),
+            )
+            return [r["schedule_id"] for r in cur.fetchall()]
 
     def get_routine_scheduled_dates(self, hevy_routine_id: str) -> list[str]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT DISTINCT scheduled_date FROM routine_schedules "
-                    "WHERE hevy_routine_id = %s AND scheduled_date IS NOT NULL "
-                    "ORDER BY scheduled_date ASC",
-                    (hevy_routine_id,),
-                )
-                return [r["scheduled_date"] for r in cur.fetchall()]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT scheduled_date FROM routine_schedules "
+                "WHERE hevy_routine_id = %s AND scheduled_date IS NOT NULL "
+                "ORDER BY scheduled_date ASC",
+                (hevy_routine_id,),
+            )
+            return [r["scheduled_date"] for r in cur.fetchall()]
 
     def clear_routine_schedules(self, hevy_routine_id: str) -> None:
         with self._get_conn() as conn:
@@ -339,38 +352,34 @@ class PostgresDatabase(Database):
             + from_where
             + " ORDER BY rs.scheduled_date ASC, sr.title ASC LIMIT %s OFFSET %s"
         )
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params + [limit, offset])
-                return [dict(r) for r in cur.fetchall()]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, params + [limit, offset])
+            return [dict(r) for r in cur.fetchall()]
 
     def count_upcoming_routine_schedules(
         self, on_or_after: str, title_query: str | None = None
     ) -> int:
         from_where, params = self._upcoming_from_where(on_or_after, title_query)
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) AS n " + from_where, params)
-                return cur.fetchone()["n"]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n " + from_where, params)
+            return cur.fetchone()["n"]
 
     def get_routine_stats(self) -> dict:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) AS synced, COUNT(scheduled_date) AS scheduled FROM synced_routines"
-                )
-                row = cur.fetchone()
-                return {"synced": row["synced"] or 0, "scheduled": row["scheduled"] or 0}
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS synced, COUNT(scheduled_date) AS scheduled FROM synced_routines"
+            )
+            row = cur.fetchone()
+            return {"synced": row["synced"] or 0, "scheduled": row["scheduled"] or 0}
 
     def get_recent_synced_routines(self, limit: int = 5) -> list[dict]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT hevy_routine_id, title, scheduled_date, garmin_workout_id, synced_at "
-                    "FROM synced_routines ORDER BY synced_at DESC LIMIT %s",
-                    (limit,),
-                )
-                return [dict(r) for r in cur.fetchall()]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT hevy_routine_id, title, scheduled_date, garmin_workout_id, synced_at "
+                "FROM synced_routines ORDER BY synced_at DESC LIMIT %s",
+                (limit,),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def mark_synced(
         self,
@@ -398,7 +407,15 @@ class PostgresDatabase(Database):
                         status = 'success',
                         synced_at = NOW()
                     """,
-                    (hevy_id, garmin_activity_id, title, calories, avg_hr, hevy_updated_at, sync_method),
+                    (
+                        hevy_id,
+                        garmin_activity_id,
+                        title,
+                        calories,
+                        avg_hr,
+                        hevy_updated_at,
+                        sync_method,
+                    ),
                 )
             conn.commit()
 
@@ -407,13 +424,12 @@ class PostgresDatabase(Database):
         if not workouts:
             return []
         hevy_ids = [w.get("id", "") for w in workouts]
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT hevy_id, hevy_updated_at FROM synced_workouts WHERE hevy_id = ANY(%s) AND hevy_updated_at IS NOT NULL",
-                    (hevy_ids,)
-                )
-                stored = {r["hevy_id"]: r["hevy_updated_at"] for r in cur.fetchall()}
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT hevy_id, hevy_updated_at FROM synced_workouts WHERE hevy_id = ANY(%s) AND hevy_updated_at IS NOT NULL",
+                (hevy_ids,),
+            )
+            stored = {r["hevy_id"]: r["hevy_updated_at"] for r in cur.fetchall()}
         stale = []
         for w in workouts:
             wid = w.get("id", "")
@@ -440,18 +456,14 @@ class PostgresDatabase(Database):
         return count
 
     def get_synced_count(self) -> int:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) AS cnt FROM synced_workouts")
-                return cur.fetchone()["cnt"]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM synced_workouts")
+            return cur.fetchone()["cnt"]
 
     def get_recent_synced(self, limit: int = 10) -> list[dict]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM synced_workouts ORDER BY synced_at DESC LIMIT %s", (limit,)
-                )
-                return [dict(r) for r in cur.fetchall()]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM synced_workouts ORDER BY synced_at DESC LIMIT %s", (limit,))
+            return [dict(r) for r in cur.fetchall()]
 
     def record_sync_log(
         self,
@@ -469,20 +481,18 @@ class PostgresDatabase(Database):
             conn.commit()
 
     def get_sync_log(self, limit: int = 20) -> list[dict]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT %s", (limit,))
-                return [dict(r) for r in cur.fetchall()]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT %s", (limit,))
+            return [dict(r) for r in cur.fetchall()]
 
     def get_cached_hr(self, hevy_id: str) -> dict | None:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT data FROM hr_cache WHERE hevy_id = %s", (hevy_id,))
-                row = cur.fetchone()
-                if row:
-                    data = row["data"]
-                    return json.loads(data) if isinstance(data, str) else data
-                return None
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT data FROM hr_cache WHERE hevy_id = %s", (hevy_id,))
+            row = cur.fetchone()
+            if row:
+                data = row["data"]
+                return json.loads(data) if isinstance(data, str) else data
+            return None
 
     def cache_hr(self, hevy_id: str, data: dict) -> None:
         with self._get_conn() as conn:
@@ -499,14 +509,13 @@ class PostgresDatabase(Database):
     # ── App config (settings, mappings) ────────────────────────────────────
 
     def get_app_config(self, key: str) -> dict | None:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT value FROM app_cache WHERE key = %s", (key,))
-                row = cur.fetchone()
-                if row:
-                    v = row["value"]
-                    return json.loads(v) if isinstance(v, str) else v
-                return None
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT value FROM app_cache WHERE key = %s", (key,))
+            row = cur.fetchone()
+            if row:
+                v = row["value"]
+                return json.loads(v) if isinstance(v, str) else v
+            return None
 
     def set_app_config(self, key: str, value: dict) -> None:
         with self._get_conn() as conn:
@@ -523,10 +532,13 @@ class PostgresDatabase(Database):
     def claim_pending(self, hevy_id: str, payload: dict) -> bool:
         with self._get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO pending_uploads (hevy_id, phase, payload)
                     VALUES (%s, 'preparing', %s) ON CONFLICT (hevy_id) DO NOTHING
-                """, (hevy_id, json.dumps(payload)))
+                """,
+                    (hevy_id, json.dumps(payload)),
+                )
                 claimed = cur.rowcount == 1
             conn.commit()
         return claimed
@@ -542,20 +554,31 @@ class PostgresDatabase(Database):
         return result
 
     def get_pending(self, hevy_id: str) -> dict | None:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM pending_uploads WHERE hevy_id=%s", (hevy_id,))
-                row = cur.fetchone()
-                return self._pending_dict(row) if row else None
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM pending_uploads WHERE hevy_id=%s", (hevy_id,))
+            row = cur.fetchone()
+            return self._pending_dict(row) if row else None
 
     def list_pending(self) -> list[dict]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM pending_uploads ORDER BY created_at DESC")
-                return [self._pending_dict(row) for row in cur.fetchall()]
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM pending_uploads ORDER BY created_at DESC")
+            return [self._pending_dict(row) for row in cur.fetchall()]
 
     def update_pending(self, hevy_id: str, **changes) -> None:
-        allowed = {"phase", "next_step", "upload_id", "garmin_activity_id", "watch_activity_id", "pre_upload_ids", "payload", "resolution_source", "attempt_count", "delete_attempt_count", "last_error", "locked_until"}
+        allowed = {
+            "phase",
+            "next_step",
+            "upload_id",
+            "garmin_activity_id",
+            "watch_activity_id",
+            "pre_upload_ids",
+            "payload",
+            "resolution_source",
+            "attempt_count",
+            "delete_attempt_count",
+            "last_error",
+            "locked_until",
+        }
         changes = {k: v for k, v in changes.items() if k in allowed}
         if not changes:
             return
@@ -565,20 +588,25 @@ class PostgresDatabase(Database):
         assignments = ", ".join(f"{key}=%s" for key in changes)
         with self._get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(f"UPDATE pending_uploads SET {assignments}, updated_at=NOW() WHERE hevy_id=%s", (*changes.values(), hevy_id))
+                cur.execute(
+                    f"UPDATE pending_uploads SET {assignments}, updated_at=NOW() WHERE hevy_id=%s",
+                    (*changes.values(), hevy_id),
+                )
             conn.commit()
 
     def delete_pending(self, hevy_id: str) -> bool:
         with self._get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM pending_uploads WHERE hevy_id=%s", (hevy_id,)); deleted = cur.rowcount > 0
+                cur.execute("DELETE FROM pending_uploads WHERE hevy_id=%s", (hevy_id,))
+                deleted = cur.rowcount > 0
             conn.commit()
         return deleted
 
     def complete_pending(self, hevy_id: str, terminal: dict) -> None:
         with self._get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO synced_workouts
                       (hevy_id, garmin_activity_id, title, calories, avg_hr, hevy_updated_at, sync_method, status)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,'success')
@@ -586,65 +614,99 @@ class PostgresDatabase(Database):
                       title=EXCLUDED.title, calories=EXCLUDED.calories, avg_hr=EXCLUDED.avg_hr,
                       hevy_updated_at=EXCLUDED.hevy_updated_at, sync_method=EXCLUDED.sync_method,
                       status='success', synced_at=NOW()
-                """, (hevy_id, terminal.get("garmin_activity_id"), terminal.get("title", ""), terminal.get("calories"), terminal.get("avg_hr"), terminal.get("hevy_updated_at"), terminal.get("sync_method", "upload")))
+                """,
+                    (
+                        hevy_id,
+                        terminal.get("garmin_activity_id"),
+                        terminal.get("title", ""),
+                        terminal.get("calories"),
+                        terminal.get("avg_hr"),
+                        terminal.get("hevy_updated_at"),
+                        terminal.get("sync_method", "upload"),
+                    ),
+                )
                 cur.execute("DELETE FROM pending_uploads WHERE hevy_id=%s", (hevy_id,))
             conn.commit()
 
-    def resolve_terminal(self, hevy_id: str, *, status: str, garmin_activity_id: str | None = None, reason: str | None = None, source: str | None = None) -> None:
+    def resolve_terminal(
+        self,
+        hevy_id: str,
+        *,
+        status: str,
+        garmin_activity_id: str | None = None,
+        reason: str | None = None,
+        source: str | None = None,
+    ) -> None:
         if status not in {"manual", "skipped"}:
             raise ValueError("manual resolution status must be manual or skipped")
         with self._get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO synced_workouts (hevy_id, garmin_activity_id, status, resolution_reason, resolved_at, resolution_source)
                     VALUES (%s,%s,%s,%s,NOW(),%s)
                     ON CONFLICT (hevy_id) DO UPDATE SET garmin_activity_id=EXCLUDED.garmin_activity_id,
                       status=EXCLUDED.status, resolution_reason=EXCLUDED.resolution_reason,
                       resolved_at=NOW(), resolution_source=EXCLUDED.resolution_source, synced_at=NOW()
-                """, (hevy_id, garmin_activity_id, status, reason, source))
+                """,
+                    (hevy_id, garmin_activity_id, status, reason, source),
+                )
                 cur.execute("DELETE FROM pending_uploads WHERE hevy_id=%s", (hevy_id,))
             conn.commit()
 
     def get_workout_states(self, hevy_ids: list[str]) -> dict[str, dict]:
         if not hevy_ids:
             return {}
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT hevy_id, status, garmin_activity_id, resolution_reason, resolution_source FROM synced_workouts WHERE hevy_id = ANY(%s)", (hevy_ids,))
-                states = {
-                    row["hevy_id"]: {
-                        "kind": "terminal", "status": row["status"] or "success",
-                        "garmin_activity_id": row["garmin_activity_id"],
-                        "reason": row["resolution_reason"], "source": row["resolution_source"],
-                    }
-                    for row in cur.fetchall()
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT hevy_id, status, garmin_activity_id, resolution_reason, resolution_source FROM synced_workouts WHERE hevy_id = ANY(%s)",
+                (hevy_ids,),
+            )
+            states = {
+                row["hevy_id"]: {
+                    "kind": "terminal",
+                    "status": row["status"] or "success",
+                    "garmin_activity_id": row["garmin_activity_id"],
+                    "reason": row["resolution_reason"],
+                    "source": row["resolution_source"],
                 }
-                cur.execute("SELECT hevy_id, phase, next_step, last_error, attempt_count, delete_attempt_count, garmin_activity_id FROM pending_uploads WHERE hevy_id = ANY(%s)", (hevy_ids,))
-                for row in cur.fetchall():
-                    if row["hevy_id"] not in states:
-                        states[row["hevy_id"]] = {
-                            "kind": "pending", "status": row["phase"],
-                            "next_step": row["next_step"], "last_error": row["last_error"],
-                            "attempt_count": row["attempt_count"],
-                            "delete_attempt_count": row["delete_attempt_count"],
-                            "garmin_activity_id": row["garmin_activity_id"],
-                        }
-                return states
+                for row in cur.fetchall()
+            }
+            cur.execute(
+                "SELECT hevy_id, phase, next_step, last_error, attempt_count, delete_attempt_count, garmin_activity_id FROM pending_uploads WHERE hevy_id = ANY(%s)",
+                (hevy_ids,),
+            )
+            for row in cur.fetchall():
+                if row["hevy_id"] not in states:
+                    states[row["hevy_id"]] = {
+                        "kind": "pending",
+                        "status": row["phase"],
+                        "next_step": row["next_step"],
+                        "last_error": row["last_error"],
+                        "attempt_count": row["attempt_count"],
+                        "delete_attempt_count": row["delete_attempt_count"],
+                        "garmin_activity_id": row["garmin_activity_id"],
+                    }
+            return states
 
     def get_terminal_counts(self) -> dict[str, int]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COALESCE(status, 'success') AS status, COUNT(*) AS count FROM synced_workouts GROUP BY COALESCE(status, 'success')")
-                raw = {row["status"]: row["count"] for row in cur.fetchall()}
-        result = {"uploaded": raw.get("success", 0), "manual": raw.get("manual", 0), "skipped": raw.get("skipped", 0)}
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(status, 'success') AS status, COUNT(*) AS count FROM synced_workouts GROUP BY COALESCE(status, 'success')"
+            )
+            raw = {row["status"]: row["count"] for row in cur.fetchall()}
+        result = {
+            "uploaded": raw.get("success", 0),
+            "manual": raw.get("manual", 0),
+            "skipped": raw.get("skipped", 0),
+        }
         result["terminal"] = sum(result.values())
         return result
 
     def get_custom_mappings(self) -> dict[str, tuple[int, int]]:
-        with self._get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT hevy_name, category, subcategory FROM custom_mappings")
-                return {r["hevy_name"]: (r["category"], r["subcategory"]) for r in cur.fetchall()}
+        with self._get_conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT hevy_name, category, subcategory FROM custom_mappings")
+            return {r["hevy_name"]: (r["category"], r["subcategory"]) for r in cur.fetchall()}
 
     def save_custom_mapping(self, hevy_name: str, category: int, subcategory: int) -> None:
         with self._get_conn() as conn:

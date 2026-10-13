@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/hevy2garmin/static/favicon.svg" width="80" height="80" alt="hevy2garmin logo">
+  <img src="docs/images/banner.png" width="100%" alt="hevy2garmin">
 </p>
 
 <h1 align="center">hevy2garmin</h1>
@@ -9,6 +9,9 @@
   <a href="https://pypi.org/project/hevy2garmin/"><img src="https://img.shields.io/pypi/v/hevy2garmin" alt="PyPI"></a>
   <a href="https://pypi.org/project/hevy2garmin/"><img src="https://img.shields.io/pypi/pyversions/hevy2garmin" alt="Python"></a>
 </p>
+
+> **0.12.0:** the Python dashboard is gone. The dashboard is the Next.js app in `web/` (Root Directory `web` on Vercel); the PyPI package is the CLI and is deprecated with an end date of **2026-10-31** (#515).
+
 
 <p align="center">
   Sync your <a href="https://hevyapp.com">Hevy</a> gym workouts to <a href="https://connect.garmin.com">Garmin Connect</a> with correct exercise names, sets, reps, weights, calorie estimation, and optional heart rate overlay from your Garmin watch.
@@ -39,11 +42,14 @@ Hevy is great for tracking gym workouts but doesn't sync to Garmin. This tool br
 
 ## Screenshots
 
-| Workouts | Mappings |
+| Workouts | Routines |
 |----------|----------|
-| ![Workouts](docs/screenshots/workouts.png) | ![Mappings](docs/screenshots/mappings.png) |
-| **HR Timeline** | **Calorie Breakdown** |
-| ![HR Chart](docs/screenshots/hr-chart.png) | ![Calories](docs/screenshots/calories.png) |
+| ![Workouts](docs/screenshots/workouts.png) | ![Routines](docs/screenshots/routines.png) |
+| **Heart rate timeline** | **Exercise mappings** |
+| ![Heart rate timeline](docs/screenshots/hr-chart.png) | ![Exercise mappings](docs/screenshots/mappings.png) |
+
+These are from the [live demo](https://hevy2garmin-demo.gkos.dev), so they show the
+current dashboard with sample data.
 
 ## Requirements
 
@@ -79,7 +85,7 @@ Sign up at [github.com](https://github.com/signup). You'll use this to sign into
 2. Find **hevy2garmin** in your repo list and click **Import**. If your fork isn't listed even though GitHub shows it, click **Adjust GitHub App Permissions** (or **Configure GitHub App**) and grant Vercel access to the repo, then it will appear.
 3. **Root Directory: `web`.** On the import screen click **Edit** next to **Root Directory** and enter `web`. This deploys the current dashboard (Next.js). Leaving it empty deploys the older Python dashboard, which still works but no longer gets new features.
 4. **Add a database (required).** If you see an **Integrations** or **Storage** section during import, add **Neon Postgres** (it's free). This is where your sync history lives. If you don't see it during import, that's fine: deploy first, then open your project's **Storage** tab, add **Neon Postgres**, and redeploy. A serverless host has a read-only filesystem, so with no database the app can't save anything and shows an "internal server error".
-5. Click **Deploy** and wait about a minute for it to build. You don't need to set any environment variables: you enter your Hevy key and Garmin login in the app on the next step. If you want a login on your dashboard, add `H2G_PASSWORD` under **Environment Variables** (you can also do this later, see [Securing the dashboard](#securing-the-dashboard)). If the deployed page shows an "internal server error", it almost always means the database step was skipped: add **Neon Postgres** from the **Storage** tab, then redeploy.
+5. Under **Environment Variables** add `H2G_PASSWORD` with a password of your choice. This is the password of your dashboard; without it the deployed app serves nothing but the setup page (see [Securing the dashboard](#securing-the-dashboard)). You enter your Hevy key and Garmin login in the app on the next step, not here. Click **Deploy** and wait about a minute for it to build. If the deployed page shows an "internal server error", it almost always means the database step was skipped: add **Neon Postgres** from the **Storage** tab, then redeploy.
 
 **Step 5: Connect Hevy and Garmin**
 
@@ -127,53 +133,9 @@ cp .env.example .env.local   # fill in DATABASE_URL, H2G_PASSWORD (or H2G_PASSWO
 npm ci && npm run dev        # http://localhost:8096
 ```
 
-CI runs a fresh-fork check for both paths on every change: the Python package must install and boot from its base dependencies, and the web app must install from its lockfile, build, and answer with a bare environment. A red check blocks the merge, so `main` stays deployable for a fresh fork.
+CI runs a fresh-fork check on every change: the web app must install from its lockfile, build, and answer with a bare environment. A red check blocks the merge, so `main` stays deployable for a fresh fork.
 
 [`docs/CUTOVER.md`](docs/CUTOVER.md) is the runbook for switching a deployment over: the checks that gate the flip, the one Vercel setting that performs it, the one that reverses it, and the behaviour differences you inherit. Read it before changing any project setting.
-
-### Web Dashboard (local install)
-
-```bash
-pip install hevy2garmin
-hevy2garmin serve
-```
-
-> Not on PyPI yet? Install from source: `git clone https://github.com/drkostas/hevy2garmin.git && cd hevy2garmin && pip install .`
-
-Open [localhost:8123](http://localhost:8123). The setup wizard walks you through connecting Hevy and Garmin.
-
-Once you click **Sync Now**, your workouts appear in [Garmin Connect](https://connect.garmin.com/modern/activities) within a few seconds. Enable **auto-sync** on the dashboard to keep things synced on a schedule (30 min to 24 hours).
-
-To keep the server running in the background:
-
-```bash
-nohup hevy2garmin serve > /dev/null 2>&1 &
-```
-
-<details>
-<summary>systemd service file (Linux)</summary>
-
-Save as `/etc/systemd/system/hevy2garmin.service`:
-
-```ini
-[Unit]
-Description=hevy2garmin dashboard
-After=network.target
-
-[Service]
-ExecStart=hevy2garmin serve
-Restart=always
-User=your-username
-Environment=HEVY_API_KEY=your-key
-Environment=GARMIN_EMAIL=your-email
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then `sudo systemctl enable --now hevy2garmin`.
-
-</details>
 
 ### CLI
 
@@ -210,38 +172,44 @@ After syncing, check [Garmin Connect](https://connect.garmin.com/modern/activiti
 
 ### Docker
 
+The image is the CLI. The dashboard is `web/` (above). This is for one-off or scheduled syncs on a box without Python.
+
 ```bash
 git clone https://github.com/drkostas/hevy2garmin.git
 cd hevy2garmin
 docker build -t hevy2garmin .
 ```
 
-Before running in Docker, you need Garmin auth tokens. Either:
-- Run `pip install hevy2garmin && hevy2garmin init` locally (if you have Python), or
-- Run `docker run -it -v ~/.garminconnect:/root/.garminconnect hevy2garmin init` to set up inside Docker interactively
+The container keeps two folders. `/root/.hevy2garmin` holds your settings and the record of what was already synced, and `/root/.garminconnect` holds the Garmin login (it lasts about a year). Mount both, every time, or the next run starts from nothing.
 
-**Web dashboard with auto-sync:**
+Named volumes are the simplest way, because Docker gives them to the container's user by itself.
 
 ```bash
-docker run -d -p 8123:8123 --restart unless-stopped \
-  -v ~/.hevy2garmin:/root/.hevy2garmin \
-  -v ~/.garminconnect:/root/.garminconnect \
-  -e HEVY_API_KEY=... \
-  -e GARMIN_EMAIL=... \
-  hevy2garmin serve
+docker run -it \
+  -v hevy2garmin_data:/root/.hevy2garmin \
+  -v garmin_auth:/root/.garminconnect \
+  hevy2garmin init
+
+docker run --rm \
+  -v hevy2garmin_data:/root/.hevy2garmin \
+  -v garmin_auth:/root/.garminconnect \
+  hevy2garmin sync
 ```
 
-Open [localhost:8123](http://localhost:8123) and enable auto-sync on the dashboard.
-
-**One-off sync:**
+If you prefer folders on the host, create them first and give them to uid 999, which is the user the image runs as. On Linux, a folder Docker creates for a `-v` mount belongs to root, and the login then cannot be saved.
 
 ```bash
-docker run --rm \
-  -v ~/.hevy2garmin:/root/.hevy2garmin \
-  -v ~/.garminconnect:/root/.garminconnect \
-  -e HEVY_API_KEY=... \
-  -e GARMIN_EMAIL=... \
-  hevy2garmin sync
+mkdir -p ~/.hevy2garmin ~/.garminconnect
+sudo chown -R 999:999 ~/.hevy2garmin ~/.garminconnect
+docker run -it -v ~/.hevy2garmin:/root/.hevy2garmin -v ~/.garminconnect:/root/.garminconnect hevy2garmin init
+```
+
+A new install has no sync history, so the first `sync` treats your recent Hevy workouts as new. If some of them are already on Garmin Connect, add `--since YYYY-MM-DD` with the day after the last one there.
+
+`sync` runs once and exits. To sync on a schedule, run the same command from cron, for example every two hours.
+
+```bash
+0 */2 * * * docker run --rm -v hevy2garmin_data:/root/.hevy2garmin -v garmin_auth:/root/.garminconnect hevy2garmin sync
 ```
 
 ### Python API
@@ -249,6 +217,8 @@ docker run --rm \
 ```bash
 pip install hevy2garmin
 ```
+
+> Deprecated: no releases after 2026-10-31. The npm package `hevy2garmin` and the `web/` dashboard replace it.
 
 Before using the API, make sure credentials are available via `~/.hevy2garmin/config.json` (run `hevy2garmin init`), environment variables, or pass them directly.
 
@@ -330,97 +300,71 @@ See [`.env.example`](.env.example) for all available env vars.
 
 ## Securing the dashboard
 
-The dashboard has no login by default (fine for a private local install). **If you deploy it to a public URL, protect it** — otherwise anyone who finds the URL can see your data.
-
-- **Set a password.** Set `H2G_PASSWORD` to require login on every page and API route. Without it the dashboard is open, so **always set a password before putting it on a public URL**.
-- **Avoid plaintext (optional).** Run `hevy2garmin hash-password` to generate an argon2 hash and set it as `H2G_PASSWORD_HASH` instead of `H2G_PASSWORD`, so the plaintext password never lives in your environment.
-- **Brute-force protection.** Failed logins are rate-limited per IP with exponential backoff and a global cap; repeated attempts get HTTP 429 with a cooldown.
-- **Sessions.** Login sets a signed, `HttpOnly`, `SameSite=Strict` cookie (30-day TTL by default, configurable via `H2G_SESSION_TTL_DAYS`), marked `Secure` over HTTPS. Setting `H2G_SECRET` (recommended, especially with `H2G_PASSWORD_HASH`) signs sessions with a dedicated key, so rotating the password doesn't sign everyone out. **Sign out all devices** (Settings → Sessions &amp; Security) invalidates every active session at once.
-
-See [`.env.example`](.env.example) for all the related variables.
+The web dashboard in `web/` requires a password on every page and API route: set `H2G_PASSWORD` (or an argon2 `H2G_PASSWORD_HASH`) and `HEVY2GARMIN_SECRET` for the session cookie, plus `CRON_SECRET` for the cron and webhook routes. `web/.env.example` lists them. Without `H2G_PASSWORD` the app refuses to serve anything but the setup page, so a public URL is never open by accident.
 
 ## Self-hosting
 
-The Vercel deploy is the quickest way to run hevy2garmin, but it is not the only one. Running it on your own machine — a spare box, a NAS, a Raspberry Pi — keeps your Hevy and Garmin data on hardware you control, and removes the once-a-day cron ceiling that serverless imposes.
-
-### Docker Compose (recommended)
+The Vercel deploy is the quickest way to run hevy2garmin, but it is not the only one. The dashboard is the Next.js app in `web/`; it runs anywhere Node runs:
 
 ```bash
 git clone https://github.com/drkostas/hevy2garmin.git
-cd hevy2garmin
-cp .env.example .env      # set HEVY_API_KEY and H2G_PASSWORD
-docker compose up -d --build
+cd hevy2garmin/web
+cp .env.example .env.local   # DATABASE_URL, H2G_PASSWORD, HEVY2GARMIN_SECRET, CRON_SECRET, HEVY_API_KEY
+npm ci && npm run build && npm start   # http://localhost:8096
 ```
 
-Open [localhost:8123](http://localhost:8123) and connect Garmin from the setup page.
+Put it behind nginx, Caddy or Traefik on a subdomain, terminate TLS there, and keep the port bound to `127.0.0.1`. `DATABASE_URL` can point at a local Postgres instead of Neon; the app creates its tables the first time it touches the database.
 
-The compose file uses named volumes for the sync database and the Garmin token store. Keep them: the token store is what saves you re-authenticating with Garmin (tokens last roughly a year), and the database is what stops already-synced workouts uploading twice.
+### Docker (dashboard)
 
-It also binds the port to `127.0.0.1` rather than all interfaces, drops all capabilities, and sets `no-new-privileges`. The image runs as an unprivileged user (uid 999).
+`web/Dockerfile` builds the dashboard as a container, and `web/docker-compose.example.yml` runs it with Postgres and a small scheduler for auto-sync. This is a different image from the CLI one in [Docker](#docker).
 
-### Keeping credentials on your own machine
-
-Two settings matter if the point of self-hosting is that nothing leaves your network:
-
-- **`H2G_DIRECT_GARMIN_LOGIN=true`** — collect your Garmin password and MFA code on your own instance and run the login there, instead of posting them to the hosted exchange worker the Vercel deploy uses. Off by default; the worker path is unchanged unless you set this. Requires a writable home directory, so it is for self-hosted installs only, not serverless.
-The resulting token store lives in `~/.garminconnect` by default (`garmin_token_dir` in `~/.hevy2garmin/config.json`). Back that directory up and you will not have to log in again after a rebuild — which is what the `garmin_auth` volume in the compose file is for.
-
-Your Hevy API key stays local either way.
-
-### Behind a reverse proxy
-
-Put the dashboard behind nginx, Caddy or Traefik on a subdomain, terminate TLS there, and keep the container bound to `127.0.0.1`. **Set `H2G_PASSWORD` before exposing it** — see [Securing the dashboard](#securing-the-dashboard).
-
-Serving it at the **root of a subdomain** (`https://hevy.example.com/`) works with no extra configuration.
-
-Serving it under a **sub-path** (`https://example.com/hevy2garmin/`) works too. It needs two things: the proxy tells the app which sub-path it is mounted at, and you set `H2G_TRUST_FORWARDED_PREFIX=true` so the app believes it.
-
-```nginx
-location /hevy2garmin/ {
-    proxy_pass http://127.0.0.1:8123/;
-    proxy_set_header Host              $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Prefix /hevy2garmin;
-}
+```bash
+git clone https://github.com/drkostas/hevy2garmin.git
+cd hevy2garmin/web
+cp docker-compose.example.yml docker-compose.yml
+cat > .env <<'EOF'
+POSTGRES_PASSWORD=pick-a-database-password
+H2G_PASSWORD=pick-a-dashboard-password
+HEVY2GARMIN_SECRET=32-random-characters
+CRON_SECRET=another-32-random-characters
+EOF
+docker compose up -d --build   # http://127.0.0.1:8096
 ```
 
-**The opt-in is not busywork.** Any client can send `X-Forwarded-Prefix`, and every URL on the page is built from it — the login form's `action`, the Garmin token POST, redirect targets. On an instance that is *not* behind a prefix-setting proxy, believing the header would let a caller re-point those at their own host. So the header is ignored unless you turn this on, and even then only a plain absolute path is accepted (no `//host`, no scheme, no quotes or angle brackets); anything else is treated as no prefix and the app serves from the root. **Your proxy must set the header itself rather than passing a client-supplied one through.**
+`openssl rand -hex 32` makes a good secret. Then open the dashboard and connect Hevy and Garmin on the setup page, the same as on Vercel.
 
-Caddy equivalent (`header_up` replaces any incoming value, which is what you want):
+The compose file starts three containers:
 
-```caddyfile
-handle_path /hevy2garmin/* {
-    reverse_proxy 127.0.0.1:8123 {
-        header_up X-Forwarded-Prefix /hevy2garmin
-    }
-}
-```
+- `db`, Postgres 16, with its data in the `db_data` volume. It is the only state; the web container holds none.
+- `web`, the dashboard on port 8096, bound to `127.0.0.1`. It runs as the unprivileged `node` user, and its health check is `GET /api/version`, which needs neither a session nor the database.
+- `cron`, which calls `GET /api/cron/sync` every two hours (`SYNC_INTERVAL_SECONDS` in `.env` changes it). Without something calling that route, a self-hosted dashboard only syncs when you press **Sync Now** or Hevy sends a webhook. The `web` service sets `H2G_SERVER_SYNC_SCHEDULE` to match, so the dashboard shows this schedule; change both together.
 
-The app then emits every link, asset, form action, htmx call, redirect and JavaScript-built API URL under that prefix. The proxy does **not** need to rewrite response bodies. Without the header nothing changes, so a root install and the Vercel deploy are unaffected.
+To run the image without compose, build it with `docker build -t hevy2garmin-web web/` and pass the same variables with `-e`, pointing `DATABASE_URL` at your Postgres. The image builds and runs on amd64 and arm64. Build it on the machine that runs it: an emulated cross-build under QEMU crashes in Next's build step. To have `/api/version` report the commit you built, set `HEVY2GARMIN_COMMIT_SHA` when you start the container.
+
+### Signing in to Garmin without the Worker
+
+The setup page signs in to Garmin through the shared Cloudflare Worker, because Garmin blocks its sign-in from cloud servers. A self-hosted server on a home connection usually is not blocked. Set `H2G_DIRECT_GARMIN_LOGIN=true` and it runs the Worker's own code in its process instead (`garmin-auth/sso-local`): your email, password, two-factor code and a pasted sign-in ticket then go from your server to Garmin and nowhere else, and `GARMIN_LOGIN_WORKER_URL` is ignored. The two-factor step is held in memory between the password and the code, so this needs one long-running process, which the Docker image is; it does not work on serverless. With Docker, add it under the `web` service's `environment`.
+
+### Under a sub-path
+
+To serve the dashboard under a path such as `https://example.com/tools/hevy2garmin` instead of a subdomain, set `H2G_BASE_PATH=/tools/hevy2garmin` when you **build**: Next.js bakes the base path into the bundle, so `npm run build` (or the image) has to be made for the path it is served under. The proxy then forwards the full path, prefix included. Forward the app's root as the bare `/tools/hevy2garmin`, not `/tools/hevy2garmin/`: Next.js redirects the slashed form to the bare one, so a proxy that maps the bare form back to the slashed one loops.
+
+With Docker, put `H2G_BASE_PATH=/tools/hevy2garmin` in `.env` before `docker compose up -d --build`, or pass `--build-arg H2G_BASE_PATH=/tools/hevy2garmin` to `docker build`. The image's health check and the compose scheduler follow it.
 
 ### Keeping it in sync
 
-Auto-sync runs on a timer inside the process, so a self-hosted instance can poll as often as you like — enable it and set the interval on the dashboard. This is the main practical difference from the Vercel deploy, where scheduling comes from a platform cron that is limited to once per day on Vercel's Hobby plan.
+The web app syncs when you press **Sync Now**, on its cron route, and on a Hevy webhook (`POST /api/cron/webhook` with `Authorization: Bearer <CRON_SECRET>`). The CLI is the other option: `hevy2garmin sync` from cron, with credentials saved by `hevy2garmin init`.
 
-### Syncing on a Hevy webhook instead of polling
+The cron route is `GET /api/cron/sync` with the same bearer. Vercel calls it daily; a self-hosted box needs a scheduler of its own. The compose file above has one. With plain cron it is this line, with your secret written in place of `$CRON_SECRET`, because cron does not read `.env`:
 
-Polling means a finished workout waits up to a full interval. Hevy can push instead: point a Hevy webhook subscription at `POST /api/cron/webhook`, authenticated with the same `CRON_SECRET` bearer token as the cron endpoint.
+```bash
+0 */2 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:8096/api/cron/sync
+```
 
-A webhook that synced immediately would be *worse* than polling for watch users, though: the paired Garmin activity has not arrived yet, the merge finds nothing, and the workout uploads as a plain FIT — leaving exactly the duplicate the merge exists to avoid. So the endpoint answers 200 straight away (Hevy times out in seconds) and stages the sync:
+Leave `GITHUB_PAT` and `GITHUB_REPO` unset on a self-hosted box. With both set, the route hands the run to the GitHub Actions workflow on your fork instead of syncing on the server.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `WEBHOOK_DELAY_SECONDS` | `300` | Wait this long before the first attempt |
-| `WEBHOOK_RETRY_INTERVAL_SECONDS` | `600` | Gap between attempts |
-| `WEBHOOK_MAX_ATTEMPTS` | `3` | Attempts before giving up |
-
-Every attempt but the last is merge-only; only the final one falls back to a plain upload, so nothing is left unsynced. Retry state is in memory, so a restart drops it — auto-sync stays the safety net, and is worth leaving enabled at a long interval.
-
-`CRON_SECRET` must be set for the endpoint to work at all — with no secret configured it answers `503` rather than accepting unauthenticated calls, since it is internet-facing and is deliberately exempt from the dashboard password. At most `WEBHOOK_MAX_INFLIGHT` (4) staged syncs run at once; past that a request is acknowledged but not staged, because the ones already running plus auto-sync cover the work.
-
-**On serverless this staging cannot run**, because the function is frozen as soon as it responds and Python on Vercel has no `waitUntil`. The endpoint detects that and does the only safe thing instead: with the watch merge on it defers to the scheduled cron (and logs that it did); with the watch merge off there is nothing to wait for, so it syncs inline — which on Vercel's Hobby plan replaces a once-a-day cron with a sync per workout.
-
-> One caveat for that last case: an inline sync can take longer than Hevy's few-second timeout, and Hevy then retries. On serverless the retry is a *separate process*, so the in-process sync lock cannot serialize the two, and the same workout could upload twice. It only applies with the watch merge off (not the default) on a serverless host; if that is your setup, prefer leaving the webhook unconfigured and relying on cron.
+The dashboard's **Auto-sync** toggle and interval schedule that GitHub Actions workflow, so on a self-hosted box they change nothing. Set `H2G_SERVER_SYNC_SCHEDULE` to how often your scheduler runs, in words (`every 2 hours`): the dashboard and Settings then show that schedule in place of the toggle, the interval and the GitHub token, and **Sync all** says it runs on the server.
 
 ### Removing duplicates from intervals.icu
 
@@ -437,7 +381,7 @@ Entirely opt-in — with either one missing the step is skipped. It also never f
 
 ### Running as a non-root user
 
-The image runs as uid 999. Named volumes (what the compose file uses) are handled automatically. If you use **bind mounts** instead — the `-v ~/.hevy2garmin:/root/.hevy2garmin` form shown in the Docker section — grant that user access once:
+The CLI image runs as uid 999. Named volumes (what the [Docker](#docker) section recommends) are handled automatically. If you use **bind mounts** instead — the `-v ~/.hevy2garmin:/root/.hevy2garmin` form shown in the Docker section — grant that user access once:
 
 ```bash
 sudo chown -R 999:999 ~/.hevy2garmin ~/.garminconnect
@@ -456,6 +400,8 @@ Your Vercel project is linked to your GitHub fork. To get the latest version:
 3. Vercel auto-deploys when your fork updates. Wait ~1 minute for the build to finish.
 4. Open your dashboard URL and reconnect Garmin if prompted (token format may change between versions)
 
+**If Sync fork shows "Discard N commits" instead of "Update branch"** (N is a number), your fork was made on or before 9 September 2026. The history of this repository was rewritten that day, so GitHub cannot update older forks the normal way. Click **Discard N commits**. This replaces the code in your fork with the current version. Your Vercel settings, environment variables and database are not in the repository, so they stay as they are. Please do not click **Open pull request**, because that sends a pull request to this repository and does not update your fork. If you changed the code in your fork yourself, please save those changes first, because discarding removes them.
+
 **If you deployed before April 2026** using the old one-click button, your repo may be a standalone copy instead of a fork ("Sync fork" button won't appear). To migrate:
 
 1. [Fork hevy2garmin](https://github.com/drkostas/hevy2garmin/fork) to your GitHub account
@@ -464,7 +410,7 @@ Your Vercel project is linked to your GitHub fork. To get the latest version:
 4. Your Neon database and env vars stay intact (they're on the Vercel project, not the repo)
 5. You can delete the old standalone copy from GitHub to avoid having two "hevy2garmin" repos
 
-### pip
+### pip (the CLI)
 
 ```bash
 pip install --upgrade hevy2garmin
@@ -477,6 +423,18 @@ cd hevy2garmin
 git pull origin main
 docker build -t hevy2garmin .
 ```
+
+Coming from the docker-compose setup? Version 0.12.0 removed `docker-compose.yml` and the dashboard it ran. Your data is still in its two volumes, usually named `hevy2garmin_hevy2garmin_data` and `hevy2garmin_garmin_auth` (check with `docker volume ls`). Use those names in the `-v` options of the [Docker](#docker) commands above and you keep your Garmin login and your sync history.
+
+### Docker (dashboard)
+
+```bash
+cd hevy2garmin
+git pull origin main
+cd web && docker compose up -d --build
+```
+
+The database is in the `db_data` volume, so rebuilding the web container loses nothing.
 
 ### Git clone (local)
 
@@ -576,6 +534,15 @@ The tool reads from **Hevy** and writes to **Garmin Connect** — it's not tied 
 a specific watch. The destination is always Garmin Connect, so you need a Garmin
 account; the watch brand you wear at the gym doesn't matter. It runs in the
 browser/cloud, not on the watch.
+
+**Every workout appears twice on Strava.**
+This happens when both Hevy and Garmin are connected to Strava. Hevy sends the
+workout to Strava itself, hevy2garmin sends the same workout to Garmin, and
+Garmin forwards it to Strava as well, so Strava receives it from two directions.
+Turn off one of the two connections. Turning off Hevy to Strava is the usual
+choice, because the copy that arrives through Garmin carries the heart rate and
+the exercise names; turning off Garmin to Strava works too if you prefer Hevy's
+own upload. Nothing needs changing in hevy2garmin either way.
 
 **My activity shows the wrong time on Strava.**
 The FIT file and Garmin Connect have the correct time. The problem is the handoff

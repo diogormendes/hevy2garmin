@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DBTokenStore } from "garmin-auth";
 import { GARMIN_TOKEN_PLATFORM, resetGarminClient } from "@/lib/garmin-upload";
+import { resolveDatabaseUrl } from "@/lib/database-url";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const url = process.env.DATABASE_URL;
+  const url = resolveDatabaseUrl();
   if (!url) {
     return NextResponse.json(
       { ok: false, error: "DATABASE_URL is not configured; cannot store the session." },

@@ -9,11 +9,10 @@ import { tabBarScreenOptions } from "soma-style";
    comes from soma-style's shared tabBarScreenOptions so it stays identical to
    soma + macro-engine; routing stays app-local. */
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
-const tabIcon =
-  (name: IconName) =>
-  ({ color, size }: { color: ColorValue; size: number }) => (
-    <Ionicons name={name} size={size} color={color as string} />
-  );
+const tabIcon = (name: IconName) =>
+  function TabIcon({ color, size }: { color: ColorValue; size: number }) {
+    return <Ionicons name={name} size={size} color={color as string} />;
+  };
 
 export default function MainLayout() {
   return (

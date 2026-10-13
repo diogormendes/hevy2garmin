@@ -17,15 +17,16 @@ def _detect_version() -> str:
     pyproject = Path(__file__).resolve().parent.parent.parent / "pyproject.toml"
     try:
         if pyproject.exists():
-            match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.M)
+            match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.MULTILINE)
             if match:
                 return match.group(1)
-    except Exception:
-        pass
+    except OSError:
+        pass  # unreadable source tree: fall through to the installed metadata
     try:
-        from importlib.metadata import version
+        from importlib.metadata import PackageNotFoundError, version
+
         return version("hevy2garmin")
-    except Exception:
+    except PackageNotFoundError:
         return "0.0.0-dev"
 
 

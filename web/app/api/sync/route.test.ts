@@ -13,6 +13,19 @@ vi.mock("@/lib/sync-one", () => ({
   syncOneWorkout: (...a: unknown[]) => syncOneWorkout(...a),
 }));
 vi.mock("@/lib/db", () => ({ getDb: () => ({}) }));
+// The batch now takes the sync lock and scans for duplicates afterwards. Both
+// are wiring this file does not exercise, so they are stubbed to their
+// "nothing in the way, nothing found" answers (#604, #608).
+vi.mock("@/lib/sync-lock-store", () => ({ postgresLockBackend: () => ({}) }));
+vi.mock("hevy2garmin", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  acquireSyncLock: async () => ({ key: "sync", token: "t", release: async () => {} }),
+}));
+vi.mock("@/lib/garmin-activities", () => ({
+  detectDuplicates: async () => [],
+  garminClient: async () => ({}),
+}));
+vi.mock("@/lib/hevy-sync", () => ({ getHevyClient: async () => ({ getAllWorkouts: async () => [] }) }));
 
 const authEnabled = vi.fn();
 const verifySession = vi.fn();
@@ -114,6 +127,17 @@ describe("POST /api/sync — batch", () => {
     expect(json.totalSynced).toBe(1);
     expect(json.totalError).toBe(1);
     expect(syncOneWorkout).toHaveBeenCalledTimes(2); // stopped after the error
+  });
+
+  it("inline loop stops when a deferred workout comes back", async () => {
+    authEnabled.mockReturnValue(false);
+    syncOneWorkout
+      .mockResolvedValueOnce({ status: "synced", remaining: 2, workout: { hevy_id: "a" } })
+      .mockResolvedValue({ status: "deferred", remaining: 1, workout: { hevy_id: "b" } });
+    const json = await (await POST(req("http://h/api/sync?live=1", {}))).json();
+    expect(json.ran).toBe(2);
+    expect(json.totalSynced).toBe(1);
+    expect(syncOneWorkout).toHaveBeenCalledTimes(3); // a, b, and b again, which ends the run
   });
 
   it("invalid JSON → 400", async () => {

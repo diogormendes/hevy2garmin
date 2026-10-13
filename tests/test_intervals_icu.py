@@ -128,7 +128,9 @@ def test_non_list_200_body_never_raises(icu_env, body):
 
 
 @pytest.mark.parametrize(
-    "workout_start", [1773763200, {"start_time": START}, [START], None], ids=["int", "dict", "list", "none"]
+    "workout_start",
+    [1773763200, {"start_time": START}, [START], None],
+    ids=["int", "dict", "list", "none"],
 )
 def test_non_string_workout_start_never_raises(icu_env, workout_start):
     """A non-str start has no .replace — AttributeError, not ValueError/TypeError."""

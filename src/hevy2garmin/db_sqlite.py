@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
-from hevy2garmin._isotime import parse_iso
 from pathlib import Path
 
+from hevy2garmin._isotime import parse_iso
 from hevy2garmin.db_interface import Database, NoWritableDatabaseError
 
 
@@ -19,6 +18,7 @@ def _ts_newer(new_ts: str, old_ts: str) -> bool:
         return new_dt > old_dt
     except (ValueError, TypeError):
         return new_ts > old_ts
+
 
 DEFAULT_DB_PATH = Path("~/.hevy2garmin/sync.db").expanduser()
 
@@ -99,12 +99,12 @@ class SQLiteDatabase(Database):
         # Migration: add hevy_updated_at if missing
         try:
             conn.execute("ALTER TABLE synced_workouts ADD COLUMN hevy_updated_at TEXT")
-        except Exception:
+        except sqlite3.OperationalError:
             pass  # Column already exists
         # Migration: add sync_method column (merge mode)
         try:
             conn.execute("ALTER TABLE synced_workouts ADD COLUMN sync_method TEXT DEFAULT 'upload'")
-        except Exception:
+        except sqlite3.OperationalError:
             pass  # Column already exists
         for column, definition in (
             ("resolution_reason", "TEXT"),
@@ -145,16 +145,14 @@ class SQLiteDatabase(Database):
         # Migration: add content_hash to routine tables created before it existed.
         try:
             conn.execute("ALTER TABLE synced_routines ADD COLUMN content_hash TEXT")
-        except Exception:
+        except sqlite3.OperationalError:
             pass  # Column already exists
         conn.commit()
         return conn
 
     def is_synced(self, hevy_id: str) -> bool:
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT 1 FROM synced_workouts WHERE hevy_id = ?", (hevy_id,)
-        ).fetchone()
+        row = conn.execute("SELECT 1 FROM synced_workouts WHERE hevy_id = ?", (hevy_id,)).fetchone()
         conn.close()
         return row is not None
 
@@ -179,8 +177,16 @@ class SQLiteDatabase(Database):
         conn.close()
         if row is None:
             return None
-        keys = ("hevy_routine_id", "garmin_workout_id", "title", "hevy_updated_at",
-                "scheduled_date", "content_hash", "synced_at", "status")
+        keys = (
+            "hevy_routine_id",
+            "garmin_workout_id",
+            "title",
+            "hevy_updated_at",
+            "scheduled_date",
+            "content_hash",
+            "synced_at",
+            "status",
+        )
         return dict(zip(keys, row))
 
     def list_synced_routines(self) -> list[dict]:
@@ -190,8 +196,16 @@ class SQLiteDatabase(Database):
             "scheduled_date, content_hash, synced_at, status FROM synced_routines"
         ).fetchall()
         conn.close()
-        keys = ("hevy_routine_id", "garmin_workout_id", "title", "hevy_updated_at",
-                "scheduled_date", "content_hash", "synced_at", "status")
+        keys = (
+            "hevy_routine_id",
+            "garmin_workout_id",
+            "title",
+            "hevy_updated_at",
+            "scheduled_date",
+            "content_hash",
+            "synced_at",
+            "status",
+        )
         return [dict(zip(keys, row)) for row in rows]
 
     def set_routine_status(self, hevy_routine_id: str, status: str) -> None:
@@ -237,7 +251,15 @@ class SQLiteDatabase(Database):
                 synced_at = datetime('now'),
                 status = excluded.status
             """,
-            (hevy_routine_id, garmin_workout_id, title, hevy_updated_at, scheduled_date, content_hash, status),
+            (
+                hevy_routine_id,
+                garmin_workout_id,
+                title,
+                hevy_updated_at,
+                scheduled_date,
+                content_hash,
+                status,
+            ),
         )
         conn.commit()
         conn.close()
@@ -248,9 +270,7 @@ class SQLiteDatabase(Database):
             "DELETE FROM synced_routines WHERE hevy_routine_id = ?", (hevy_routine_id,)
         )
         deleted = cur.rowcount > 0
-        conn.execute(
-            "DELETE FROM routine_schedules WHERE hevy_routine_id = ?", (hevy_routine_id,)
-        )
+        conn.execute("DELETE FROM routine_schedules WHERE hevy_routine_id = ?", (hevy_routine_id,))
         conn.commit()
         conn.close()
         return deleted
@@ -289,9 +309,7 @@ class SQLiteDatabase(Database):
 
     def clear_routine_schedules(self, hevy_routine_id: str) -> None:
         conn = self._get_conn()
-        conn.execute(
-            "DELETE FROM routine_schedules WHERE hevy_routine_id = ?", (hevy_routine_id,)
-        )
+        conn.execute("DELETE FROM routine_schedules WHERE hevy_routine_id = ?", (hevy_routine_id,))
         conn.commit()
         conn.close()
 
@@ -346,9 +364,7 @@ class SQLiteDatabase(Database):
 
     def get_routine_stats(self) -> dict:
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT COUNT(*), COUNT(scheduled_date) FROM synced_routines"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*), COUNT(scheduled_date) FROM synced_routines").fetchone()
         conn.close()
         return {"synced": row[0] or 0, "scheduled": row[1] or 0}
 
@@ -461,17 +477,13 @@ class SQLiteDatabase(Database):
     def get_sync_log(self, limit: int = 20) -> list[dict]:
         conn = self._get_conn()
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM sync_log ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM sync_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         conn.close()
         return [dict(r) for r in rows]
 
     def get_cached_hr(self, hevy_id: str) -> dict | None:
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT data FROM hr_cache WHERE hevy_id = ?", (hevy_id,)
-        ).fetchone()
+        row = conn.execute("SELECT data FROM hr_cache WHERE hevy_id = ?", (hevy_id,)).fetchone()
         conn.close()
         if row:
             return json.loads(row[0])
@@ -488,9 +500,7 @@ class SQLiteDatabase(Database):
 
     def get_app_config(self, key: str) -> dict | None:
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT value FROM app_cache WHERE key = ?", (key,)
-        ).fetchone()
+        row = conn.execute("SELECT value FROM app_cache WHERE key = ?", (key,)).fetchone()
         conn.close()
         if row:
             return json.loads(row[0])
@@ -524,19 +534,34 @@ class SQLiteDatabase(Database):
         return result
 
     def get_pending(self, hevy_id: str) -> dict | None:
-        conn = self._get_conn(); conn.row_factory = sqlite3.Row
+        conn = self._get_conn()
+        conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM pending_uploads WHERE hevy_id=?", (hevy_id,)).fetchone()
         conn.close()
         return self._pending_dict(row) if row else None
 
     def list_pending(self) -> list[dict]:
-        conn = self._get_conn(); conn.row_factory = sqlite3.Row
+        conn = self._get_conn()
+        conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM pending_uploads ORDER BY created_at DESC").fetchall()
         conn.close()
         return [self._pending_dict(row) for row in rows]
 
     def update_pending(self, hevy_id: str, **changes) -> None:
-        allowed = {"phase", "next_step", "upload_id", "garmin_activity_id", "watch_activity_id", "pre_upload_ids", "payload", "resolution_source", "attempt_count", "delete_attempt_count", "last_error", "locked_until"}
+        allowed = {
+            "phase",
+            "next_step",
+            "upload_id",
+            "garmin_activity_id",
+            "watch_activity_id",
+            "pre_upload_ids",
+            "payload",
+            "resolution_source",
+            "attempt_count",
+            "delete_attempt_count",
+            "last_error",
+            "locked_until",
+        }
         changes = {k: v for k, v in changes.items() if k in allowed}
         if not changes:
             return
@@ -545,16 +570,24 @@ class SQLiteDatabase(Database):
                 changes[key] = json.dumps(changes[key])
         assignments = ", ".join(f"{key}=?" for key in changes)
         conn = self._get_conn()
-        conn.execute(f"UPDATE pending_uploads SET {assignments}, updated_at=datetime('now') WHERE hevy_id=?", (*changes.values(), hevy_id))
-        conn.commit(); conn.close()
+        conn.execute(
+            f"UPDATE pending_uploads SET {assignments}, updated_at=datetime('now') WHERE hevy_id=?",
+            (*changes.values(), hevy_id),
+        )
+        conn.commit()
+        conn.close()
 
     def delete_pending(self, hevy_id: str) -> bool:
-        conn = self._get_conn(); cur = conn.execute("DELETE FROM pending_uploads WHERE hevy_id=?", (hevy_id,))
-        conn.commit(); conn.close(); return cur.rowcount > 0
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM pending_uploads WHERE hevy_id=?", (hevy_id,))
+        conn.commit()
+        conn.close()
+        return cur.rowcount > 0
 
     def complete_pending(self, hevy_id: str, terminal: dict) -> None:
         conn = self._get_conn()
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO synced_workouts
               (hevy_id, garmin_activity_id, title, calories, avg_hr, hevy_updated_at, sync_method, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'success')
@@ -563,39 +596,65 @@ class SQLiteDatabase(Database):
               calories=excluded.calories, avg_hr=excluded.avg_hr,
               hevy_updated_at=excluded.hevy_updated_at, sync_method=excluded.sync_method,
               status='success', synced_at=datetime('now')
-        """, (hevy_id, terminal.get("garmin_activity_id"), terminal.get("title", ""), terminal.get("calories"), terminal.get("avg_hr"), terminal.get("hevy_updated_at"), terminal.get("sync_method", "upload")))
+        """,
+            (
+                hevy_id,
+                terminal.get("garmin_activity_id"),
+                terminal.get("title", ""),
+                terminal.get("calories"),
+                terminal.get("avg_hr"),
+                terminal.get("hevy_updated_at"),
+                terminal.get("sync_method", "upload"),
+            ),
+        )
         conn.execute("DELETE FROM pending_uploads WHERE hevy_id=?", (hevy_id,))
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
 
-    def resolve_terminal(self, hevy_id: str, *, status: str, garmin_activity_id: str | None = None, reason: str | None = None, source: str | None = None) -> None:
+    def resolve_terminal(
+        self,
+        hevy_id: str,
+        *,
+        status: str,
+        garmin_activity_id: str | None = None,
+        reason: str | None = None,
+        source: str | None = None,
+    ) -> None:
         if status not in {"manual", "skipped"}:
             raise ValueError("manual resolution status must be manual or skipped")
         conn = self._get_conn()
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO synced_workouts (hevy_id, garmin_activity_id, status, resolution_reason, resolved_at, resolution_source)
             VALUES (?, ?, ?, ?, datetime('now'), ?)
             ON CONFLICT(hevy_id) DO UPDATE SET garmin_activity_id=excluded.garmin_activity_id,
               status=excluded.status, resolution_reason=excluded.resolution_reason,
               resolved_at=datetime('now'), resolution_source=excluded.resolution_source,
               synced_at=datetime('now')
-        """, (hevy_id, garmin_activity_id, status, reason, source))
+        """,
+            (hevy_id, garmin_activity_id, status, reason, source),
+        )
         conn.execute("DELETE FROM pending_uploads WHERE hevy_id=?", (hevy_id,))
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
 
     def get_workout_states(self, hevy_ids: list[str]) -> dict[str, dict]:
         if not hevy_ids:
             return {}
         placeholders = ",".join("?" for _ in hevy_ids)
-        conn = self._get_conn(); conn.row_factory = sqlite3.Row
+        conn = self._get_conn()
+        conn.row_factory = sqlite3.Row
         terminal = conn.execute(
             f"SELECT hevy_id, status, garmin_activity_id, resolution_reason, resolution_source FROM synced_workouts WHERE hevy_id IN ({placeholders})",
             hevy_ids,
         ).fetchall()
         states = {
             row["hevy_id"]: {
-                "kind": "terminal", "status": row["status"] or "success",
+                "kind": "terminal",
+                "status": row["status"] or "success",
                 "garmin_activity_id": row["garmin_activity_id"],
-                "reason": row["resolution_reason"], "source": row["resolution_source"],
+                "reason": row["resolution_reason"],
+                "source": row["resolution_source"],
             }
             for row in terminal
         }
@@ -610,8 +669,10 @@ class SQLiteDatabase(Database):
         for row in pending:
             if row["hevy_id"] not in states:
                 states[row["hevy_id"]] = {
-                    "kind": "pending", "status": row["phase"],
-                    "next_step": row["next_step"], "last_error": row["last_error"],
+                    "kind": "pending",
+                    "status": row["phase"],
+                    "next_step": row["next_step"],
+                    "last_error": row["last_error"],
                     "attempt_count": row["attempt_count"],
                     "delete_attempt_count": row["delete_attempt_count"],
                     "garmin_activity_id": row["garmin_activity_id"],
@@ -620,9 +681,15 @@ class SQLiteDatabase(Database):
 
     def get_terminal_counts(self) -> dict[str, int]:
         conn = self._get_conn()
-        rows = conn.execute("SELECT COALESCE(status, 'success'), COUNT(*) FROM synced_workouts GROUP BY COALESCE(status, 'success')").fetchall()
+        rows = conn.execute(
+            "SELECT COALESCE(status, 'success'), COUNT(*) FROM synced_workouts GROUP BY COALESCE(status, 'success')"
+        ).fetchall()
         conn.close()
         raw = dict(rows)
-        result = {"uploaded": raw.get("success", 0), "manual": raw.get("manual", 0), "skipped": raw.get("skipped", 0)}
+        result = {
+            "uploaded": raw.get("success", 0),
+            "manual": raw.get("manual", 0),
+            "skipped": raw.get("skipped", 0),
+        }
         result["terminal"] = sum(result.values())
         return result

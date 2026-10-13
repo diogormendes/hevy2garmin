@@ -4,8 +4,11 @@ import { SyncPanel } from "@/components/sync-panel";
 import { SyncLoop } from "@/components/sync-loop";
 import { BatchSync } from "@/components/batch-sync";
 import { AutoSyncToggle } from "@/components/autosync-toggle";
+import { ServerSchedule } from "@/components/server-schedule";
+import { serverSyncSchedule } from "@/lib/server-schedule";
 import { PipelineDiagram } from "@/components/pipeline-diagram";
 import { HEVY_TO_GARMIN } from "hevy2garmin";
+import { withBasePath } from "@/lib/base-path";
 
 // Queries the live hevy2garmin Postgres per request — never at build time.
 export const dynamic = "force-dynamic";
@@ -252,7 +255,7 @@ export default async function DashboardPage() {
                 : "Hevy isn't connected — connect it to pull workouts."}
           </p>
           <a
-            href="/setup"
+            href={withBasePath("/setup")}
             className="rounded-lg bg-warm/20 px-3 py-1.5 text-xs font-medium text-warm transition-colors hover:bg-warm/30"
           >
             {!data.garminConnected ? "Connect Garmin" : "Connect Hevy"} →
@@ -279,7 +282,7 @@ export default async function DashboardPage() {
                 {data.routinesSynced} synced · {data.routinesScheduled} scheduled
               </p>
             </div>
-            <a href="/routines" className="text-xs font-medium text-teal underline">
+            <a href={withBasePath("/routines")} className="text-xs font-medium text-teal underline">
               Manage →
             </a>
           </div>
@@ -292,11 +295,15 @@ export default async function DashboardPage() {
         <SyncLoop ready={data.hevyConnected && data.garminConnected} />
       </div>
       <div className="mt-3">
-        <BatchSync ready={data.hevyConnected && data.garminConnected} />
+        <BatchSync ready={data.hevyConnected && data.garminConnected} onServer={serverSyncSchedule() != null} />
       </div>
 
       <div className="mb-8">
-        <AutoSyncToggle enabled={data.autoSyncEnabled} interval={data.autoSyncInterval} />
+        {serverSyncSchedule() ? (
+          <ServerSchedule schedule={serverSyncSchedule() ?? ""} />
+        ) : (
+          <AutoSyncToggle enabled={data.autoSyncEnabled} interval={data.autoSyncInterval} />
+        )}
       </div>
 
       <PipelineDiagram mappingCount={Object.keys(HEVY_TO_GARMIN).length} />
@@ -306,7 +313,7 @@ export default async function DashboardPage() {
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-text">Recent workouts</h2>
           {data.recent.length > 0 && (
-            <a href="/history" className="text-xs font-medium text-teal underline">
+            <a href={withBasePath("/history")} className="text-xs font-medium text-teal underline">
               All →
             </a>
           )}

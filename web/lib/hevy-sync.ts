@@ -14,7 +14,7 @@
  *   3. the `platform_credentials` row where platform='hevy' (credentials.api_key),
  *      matching how the Python config.py resolves it.
  */
-import { HevyClient } from "hevy2garmin";
+import { HevyClient, HevyAuthError } from "hevy2garmin";
 import { getDb } from "./db";
 
 /** Read the stored Hevy API key from platform_credentials (platform='hevy'). */
@@ -72,7 +72,60 @@ export async function fetchWorkoutCount(key?: string | null): Promise<number> {
  */
 export async function fetchAllWorkouts(key?: string | null): Promise<HevyWorkout[]> {
   const client = await getHevyClient(key);
-  return (await client.getAllWorkouts()) as HevyWorkout[];
+  return withKeyStatus(async () => (await client.getAllWorkouts()) as HevyWorkout[]);
+}
+
+/**
+ * Record whether Hevy accepted the key, so a revoked one stops being invisible.
+ *
+ * When a key expires or is revoked, the scheduled sync keeps firing and every
+ * run fails the same way, with nothing on the dashboard saying the key is the
+ * reason. The user sees syncing stop and has no way to learn why (#605).
+ *
+ * Marking the credential disconnected puts that on the dashboard, in the place
+ * that already shows whether Hevy is connected, with no new concept for the
+ * user to learn.
+ *
+ * It does NOT turn auto-sync off, which is what the issue originally proposed,
+ * borrowed from a Python code path that has not run since #514. Disabling is a
+ * decision taken on the user's behalf from a single signal, and it does not
+ * undo itself: a key fixed later would leave the schedule off until the user
+ * noticed, which is the same silent failure in the other direction. This status
+ * clears itself on the next successful call.
+ */
+async function withKeyStatus<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    const out = await run();
+    await setHevyKeyStatus("active");
+    return out;
+  } catch (err) {
+    if (err instanceof HevyAuthError) await setHevyKeyStatus("disconnected");
+    throw err;
+  }
+}
+
+/** Best-effort: a status write must never fail the sync it is reporting on. */
+async function setHevyKeyStatus(status: "active" | "disconnected"): Promise<void> {
+  try {
+    const sql = getDb();
+    // RETURNING, not the driver's row count: getDb() hands back a plain array,
+    // so a `count` property never survives to here.
+    const updated = await sql`
+      UPDATE platform_credentials SET status = ${status} WHERE platform = 'hevy'
+      RETURNING platform
+    `;
+    // A key from HEVY_API_KEY has no row to mark, so a rejected one would stay
+    // invisible. Write a row that holds only the status, never the key.
+    if (updated.length === 0 && process.env.HEVY_API_KEY?.trim()) {
+      await sql`
+        INSERT INTO platform_credentials (platform, auth_type, credentials, status)
+        VALUES ('hevy', 'api_key', '{}'::jsonb, ${status})
+        ON CONFLICT (platform) DO NOTHING
+      `;
+    }
+  } catch {
+    // No database, or no row yet. Either way the sync's own outcome stands.
+  }
 }
 
 /**

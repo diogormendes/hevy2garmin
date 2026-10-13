@@ -40,7 +40,7 @@ def _typescript_mapping(text: str, name: str) -> dict[str, list[int]]:
     match = re.search(
         rf"export const {name}: Record<string, \[number, number\]> = (\{{.*?\}});",
         text,
-        re.S,
+        re.DOTALL,
     )
     if not match:
         raise RuntimeError(f"could not find {name} in {TYPESCRIPT_MAP}")
@@ -70,7 +70,9 @@ def main() -> int:
         if ts_map != python_map or ts_template != template_map:
             print("TypeScript exercise maps are out of date; run the generator.", file=sys.stderr)
             return 1
-        print(f"TypeScript maps are up to date ({len(python_map)} names, {len(template_map)} templates).")
+        print(
+            f"TypeScript maps are up to date ({len(python_map)} names, {len(template_map)} templates)."
+        )
         return 0
 
     rendered = _render(python_map, template_map)

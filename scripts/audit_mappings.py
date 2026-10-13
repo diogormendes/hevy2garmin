@@ -34,6 +34,7 @@ Usage:
   HEVY_API_KEY=... python scripts/audit_mappings.py    # include Hevy cross-check
   pip install -e ".[audit]" && python scripts/audit_mappings.py --regenerate-catalog
 """
+
 from __future__ import annotations
 
 import argparse
@@ -83,7 +84,7 @@ def regenerate_catalog() -> None:
     if not ver:
         try:
             ver = md.version("garmin-fit-sdk")
-        except Exception:
+        except md.PackageNotFoundError:
             ver = "unknown"
     out = {
         "_provenance": {"source": "garmin-fit-sdk", "version": ver},
@@ -100,7 +101,7 @@ def regenerate_catalog() -> None:
 def parse_comments() -> dict[str, str]:
     src = MAPPER.read_text()
     rx = re.compile(
-        r'^\s*"(?P<key>(?:[^"\\]|\\.)*)":\s*\(\d+,\s*\d+\),\s*#\s*(?P<cmt>.*?)\s*$', re.M
+        r'^\s*"(?P<key>(?:[^"\\]|\\.)*)":\s*\(\d+,\s*\d+\),\s*#\s*(?P<cmt>.*?)\s*$', re.MULTILINE
     )
     return {m.group("key"): m.group("cmt") for m in rx.finditer(src)}
 
@@ -114,7 +115,7 @@ def find_duplicate_keys() -> list[tuple[str, int]]:
     consequence is silent: an exact mapping replaced by whatever was added
     later under a different category heading (#275).
     """
-    rx = re.compile(r'^\s{4}"((?:[^"\\]|\\.)*)":\s*\(\d+,\s*\d+\),', re.M)
+    rx = re.compile(r'^\s{4}"((?:[^"\\]|\\.)*)":\s*\(\d+,\s*\d+\),', re.MULTILINE)
     counts: dict[str, int] = {}
     for m in rx.finditer(MAPPER.read_text()):
         counts[m.group(1)] = counts.get(m.group(1), 0) + 1
@@ -188,8 +189,10 @@ def main() -> int:
     duplicates = find_duplicate_keys()
 
     total_names = sum(len(s) for s in names.values())
-    print(f"FIT ground truth: {prov.get('source')} {prov.get('version')} "
-          f"({len(cats)} categories, {total_names} names)")
+    print(
+        f"FIT ground truth: {prov.get('source')} {prov.get('version')} "
+        f"({len(cats)} categories, {total_names} names)"
+    )
     print(f"Mapper entries: {len(mapping)}")
     print(f"  duplicate keys:      {len(duplicates)}")
     print(f"  invalid category:    {len(bad_cat)}")

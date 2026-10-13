@@ -22,7 +22,7 @@ _instance: Database | None = None
 # Check all common names so users don't have to change the prefix.
 # Prefer pooled URLs (pgbouncer) for faster connections on serverless
 _POSTGRES_URL_VARS = [
-    "POSTGRES_URL",       # Neon pooled (pgbouncer) — fastest for serverless
+    "POSTGRES_URL",  # Neon pooled (pgbouncer) — fastest for serverless
     "DATABASE_URL",
     "STORAGE_URL",
     "NEON_DATABASE_URL",
@@ -85,7 +85,9 @@ def mark_synced(
 ) -> None:
     """Record a successfully synced workout."""
     kw.pop("db_path", None)  # consumed by test dispatcher, not by backends
-    return get_db().mark_synced(hevy_id, garmin_activity_id, title, calories, avg_hr, hevy_updated_at, **kw)
+    return get_db().mark_synced(
+        hevy_id, garmin_activity_id, title, calories, avg_hr, hevy_updated_at, **kw
+    )
 
 
 def unsync(hevy_id: str, **kw) -> bool:

@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 import zipfile
+from pathlib import Path
+from typing import ClassVar
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from fit_tool.fit_file import FitFile
 from fit_tool.profile.messages.record_message import RecordMessage
 
+from hevy2garmin.fit import generate_fit
 from hevy2garmin.hr import (
     HRBackupError,
     backup_activity_hr,
@@ -24,25 +25,24 @@ from hevy2garmin.hr import (
     merge_hr_sources,
     save_hr_backup,
 )
-from hevy2garmin.fit import generate_fit
-
 
 # --- merge_hr_sources -------------------------------------------------------
 
+
 class TestMergeHRSources:
     def test_primary_wins_per_bucket(self):
-        primary = [{"time": 0, "hr": 150}, {"time": 10, "hr": 160}]   # AirPods
-        secondary = [{"time": 0, "hr": 90}, {"time": 10, "hr": 95}]   # watch
+        primary = [{"time": 0, "hr": 150}, {"time": 10, "hr": 160}]  # AirPods
+        secondary = [{"time": 0, "hr": 90}, {"time": 10, "hr": 95}]  # watch
         merged = merge_hr_sources(primary, secondary)
         assert {s["hr"] for s in merged} == {150, 160}  # AirPods wins both buckets
 
     def test_secondary_fills_gaps(self):
-        primary = [{"time": 0, "hr": 150}]                 # AirPods only at start
+        primary = [{"time": 0, "hr": 150}]  # AirPods only at start
         secondary = [{"time": 0, "hr": 90}, {"time": 60, "hr": 100}]  # watch covers later
         merged = merge_hr_sources(primary, secondary)
         hrs = [s["hr"] for s in merged]
-        assert 150 in hrs        # AirPods kept where present
-        assert 100 in hrs        # watch fills the gap at t=60
+        assert 150 in hrs  # AirPods kept where present
+        assert 100 in hrs  # watch fills the gap at t=60
 
     def test_empty_primary_returns_secondary(self):
         secondary = [{"time": 5, "hr": 88}]
@@ -62,6 +62,7 @@ class TestMergeHRSources:
 
 # --- extract_hevy_hr --------------------------------------------------------
 
+
 class TestExtractHevyHR:
     def test_standard_hevy_workout_has_no_hr(self):
         # The Hevy public API exposes no HR — sets carry only weight/reps/etc.
@@ -79,6 +80,7 @@ class TestExtractHevyHR:
 
 # --- fetch_watch_hr ---------------------------------------------------------
 
+
 class TestFetchWatchHR:
     def _workout(self):
         return {"start_time": "2026-03-15T18:00:00+00:00", "end_time": "2026-03-15T18:10:00+00:00"}
@@ -86,13 +88,14 @@ class TestFetchWatchHR:
     def test_slices_to_window(self):
         w = self._workout()
         import datetime as dt
+
         start_ms = int(dt.datetime.fromisoformat(w["start_time"]).timestamp() * 1000)
         client = MagicMock()
         # one sample inside the window, one way outside
         client.get_heart_rates.return_value = {
             "heartRateValues": [
-                [start_ms + 60_000, 120],          # inside (t=60s)
-                [start_ms + 999_000_000, 200],     # far outside → dropped
+                [start_ms + 60_000, 120],  # inside (t=60s)
+                [start_ms + 999_000_000, 200],  # far outside → dropped
             ]
         }
         samples = fetch_watch_hr(client, w)
@@ -110,13 +113,17 @@ class TestFetchWatchHR:
 
 # --- fetch_activity_hr ------------------------------------------------------
 
+
 class TestFetchActivityHR:
-    WORKOUT = {
+    WORKOUT: ClassVar = {
         "title": "Push",
         "start_time": "2026-03-15T18:00:00+00:00",
         "end_time": "2026-03-15T18:10:00+00:00",
         "exercises": [
-            {"title": "Bench Press (Barbell)", "sets": [{"type": "normal", "weight_kg": 60, "reps": 10}]},
+            {
+                "title": "Bench Press (Barbell)",
+                "sets": [{"type": "normal", "weight_kg": 60, "reps": 10}],
+            },
         ],
     }
 
@@ -198,10 +205,9 @@ class TestFetchActivityHR:
         client = MagicMock()
         client.download_activity.side_effect = RuntimeError("not downloadable")
         import datetime as dt
+
         start_ms = int(dt.datetime.fromisoformat(self.WORKOUT["start_time"]).timestamp() * 1000)
-        client.get_heart_rates.return_value = {
-            "heartRateValues": [[start_ms + 60_000, 120]]
-        }
+        client.get_heart_rates.return_value = {"heartRateValues": [[start_ms + 60_000, 120]]}
 
         samples = build_workout_hr(client, self.WORKOUT, source_activity_id=123)
 
@@ -210,8 +216,9 @@ class TestFetchActivityHR:
 
 # --- durable HR backup ------------------------------------------------------
 
+
 class TestHRBackup:
-    WORKOUT = {
+    WORKOUT: ClassVar = {
         "id": "w1",
         "start_time": "2026-03-15T18:00:00+00:00",
         "end_time": "2026-03-15T18:10:00+00:00",
@@ -305,9 +312,7 @@ class TestHRBackup:
     def test_replacement_stops_without_source_hr_or_backup(self, _fetch):
         database = MagicMock()
         database.get_app_config.return_value = None
-        database.get_cached_hr.return_value = {
-            "hr_samples": [{"time": 0, "hr": 90}]
-        }
+        database.get_cached_hr.return_value = {"hr_samples": [{"time": 0, "hr": 90}]}
 
         with pytest.raises(HRBackupError, match="source activity preserved"):
             hr_for_sync(
@@ -362,6 +367,7 @@ class TestHRBackup:
 
 # --- end-to-end: HR actually lands in the FIT -------------------------------
 
+
 def _hr_count_in_fit(path: str) -> int:
     fit = FitFile.from_file(path)
     n = 0
@@ -373,15 +379,18 @@ def _hr_count_in_fit(path: str) -> int:
 
 
 class TestHREmbeddedInFit:
-    WORKOUT = {
+    WORKOUT: ClassVar = {
         "title": "Push",
         "start_time": "2026-03-15T18:00:00+00:00",
         "end_time": "2026-03-15T18:10:00+00:00",
         "exercises": [
-            {"title": "Bench Press (Barbell)", "sets": [{"type": "normal", "weight_kg": 60, "reps": 10}]},
+            {
+                "title": "Bench Press (Barbell)",
+                "sets": [{"type": "normal", "weight_kg": 60, "reps": 10}],
+            },
         ],
     }
-    PROFILE = {"weight_kg": 78.0, "birth_year": 1994, "vo2max": 50.0}
+    PROFILE: ClassVar = {"weight_kg": 78.0, "birth_year": 1994, "vo2max": 50.0}
 
     def test_timestamped_hr_written_to_fit(self, tmp_path: Path):
         path = str(tmp_path / "w.fit")
@@ -393,7 +402,9 @@ class TestHREmbeddedInFit:
 
     def test_plain_bpm_list_still_works(self, tmp_path: Path):
         path = str(tmp_path / "w.fit")
-        result = generate_fit(self.WORKOUT, hr_samples=[100, 110, 120], output_path=path, profile=self.PROFILE)
+        result = generate_fit(
+            self.WORKOUT, hr_samples=[100, 110, 120], output_path=path, profile=self.PROFILE
+        )
         assert result["hr_samples"] == 3
         assert _hr_count_in_fit(path) == 3
 

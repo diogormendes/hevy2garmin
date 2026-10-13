@@ -11,9 +11,11 @@ from hevy2garmin.hevy import HevyClient
 
 class TestInit:
     def test_requires_api_key(self) -> None:
-        with patch.dict("os.environ", {}, clear=True):
-            with pytest.raises(ValueError, match="API key required"):
-                HevyClient(api_key="")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            pytest.raises(ValueError, match="API key required"),
+        ):
+            HevyClient(api_key="")
 
     def test_accepts_api_key_param(self) -> None:
         client = HevyClient(api_key="test-key-123")
@@ -92,7 +94,9 @@ class TestRateLimiting:
         mock_resp.json.return_value = {"data": "ok"}
         mock_resp.raise_for_status.return_value = None
 
-        with patch.object(client.session, "get", return_value=mock_resp):
-            with patch("hevy2garmin.hevy.time.sleep") as mock_sleep:
-                client._get("/test")
-                mock_sleep.assert_called_once_with(0.5)
+        with (
+            patch.object(client.session, "get", return_value=mock_resp),
+            patch("hevy2garmin.hevy.time.sleep") as mock_sleep,
+        ):
+            client._get("/test")
+            mock_sleep.assert_called_once_with(0.5)

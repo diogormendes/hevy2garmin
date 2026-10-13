@@ -9,6 +9,7 @@ Two concerns live here:
 - :func:`reconcile_missing_routine_workouts` — flag routine planned workouts the
   user deleted on Garmin, so the dashboard stops showing them as synced.
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,7 +36,7 @@ def detect_duplicates(client, workouts: list[dict], limiter=None) -> list[dict]:
             start_naive = start.replace(tzinfo=None)
             end_naive = end.replace(tzinfo=None)
             date_str = str(workout.get("start_time") or "")[:10]
-            call = (limiter.call if limiter is not None else (lambda f, *a: f(*a)))
+            call = limiter.call if limiter is not None else (lambda f, *a: f(*a))
             acts = call(client.get_activities_by_date, date_str, date_str)
             tool_id = watch_id = None
             for act in acts or []:
@@ -54,13 +55,17 @@ def detect_duplicates(client, workouts: list[dict], limiter=None) -> list[dict]:
                 elif manufacturer:
                     watch_id = act.get("activityId")
             if tool_id is not None and watch_id is not None:
-                dup = {"workout_id": workout.get("id"),
-                       "workout_title": workout.get("title"),
-                       "tool_activity_id": tool_id,
-                       "watch_activity_id": watch_id}
+                dup = {
+                    "workout_id": workout.get("id"),
+                    "workout_title": workout.get("title"),
+                    "tool_activity_id": tool_id,
+                    "watch_activity_id": watch_id,
+                }
                 logger.warning(
                     "  ⚠ Duplicate for workout %s: tool activity %s + watch activity %s",
-                    dup["workout_id"], tool_id, watch_id,
+                    dup["workout_id"],
+                    tool_id,
+                    watch_id,
                 )
                 dups.append(dup)
         except Exception:
@@ -86,9 +91,7 @@ def reconcile_missing_routine_workouts(store, garmin_workouts: list[dict] | None
         return []
     changed: list[str] = []
     try:
-        present = {
-            str(w["workoutId"]) for w in garmin_workouts if w.get("workoutId") is not None
-        }
+        present = {str(w["workoutId"]) for w in garmin_workouts if w.get("workoutId") is not None}
         for row in store.list_synced_routines():
             wid = row.get("garmin_workout_id")
             if not wid:
@@ -99,7 +102,9 @@ def reconcile_missing_routine_workouts(store, garmin_workouts: list[dict] | None
                 changed.append(row["hevy_routine_id"])
                 logger.info(
                     "Routine %s (%s): Garmin workout %s is gone — marked missing",
-                    row["hevy_routine_id"], row.get("title") or "?", wid,
+                    row["hevy_routine_id"],
+                    row.get("title") or "?",
+                    wid,
                 )
             elif str(wid) in present and status == "missing_on_garmin":
                 store.set_routine_status(row["hevy_routine_id"], "success")

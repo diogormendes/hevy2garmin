@@ -74,7 +74,7 @@ def check() -> int:
     sys.path.insert(0, str(SRC))
     from hevy2garmin.mapper import HEVY_TO_GARMIN
 
-    entry = re.compile(r'^    "(\w+)": \((\d+), (\d+)\),  # (.+)$', re.M)
+    entry = re.compile(r'^    "(\w+)": \((\d+), (\d+)\),  # (.+)$', re.MULTILINE)
     drift: list[str] = []
     orphans: list[str] = []
     total = 0
@@ -84,13 +84,16 @@ def check() -> int:
         if expected is None:
             orphans.append(f"{title} [{tid}]")
         elif expected != (int(cat), int(sub)):
-            drift.append(f"  {title} [{tid}]: generated {(int(cat), int(sub))}, table has {expected}")
+            drift.append(
+                f"  {title} [{tid}]: generated {(int(cat), int(sub))}, table has {expected}"
+            )
 
     print(f"checked {total} generated entries against HEVY_TO_GARMIN")
     if orphans:
-        print(f"note: {len(orphans)} entries whose title is no longer in the table "
-              f"(cannot be verified): {', '.join(orphans[:5])}"
-              + (" ..." if len(orphans) > 5 else ""))
+        print(
+            f"note: {len(orphans)} entries whose title is no longer in the table "
+            f"(cannot be verified): {', '.join(orphans[:5])}" + (" ..." if len(orphans) > 5 else "")
+        )
     if drift:
         print(f"\nout of date ({len(drift)}):", file=sys.stderr)
         print("\n".join(drift), file=sys.stderr)

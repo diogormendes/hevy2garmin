@@ -12,6 +12,7 @@ import {
 import { getDb } from "./db";
 import type { Sql } from "./pending-store";
 import { buildSyncDeps } from "./sync-one";
+import { loadSyncSettings } from "./sync-settings";
 
 export type { RecoveryOptions, RecoveryResult } from "hevy2garmin";
 
@@ -19,6 +20,19 @@ export function reconcilePending(hevyId: string, _opts: RecoveryOptions = {}, sq
   return engineReconcilePending(buildSyncDeps(sql), hevyId);
 }
 
-export function retryPending(hevyId: string, opts: RecoveryOptions = {}, sql: Sql = getDb()) {
-  return engineRetryPending(buildSyncDeps(sql), hevyId, opts);
+/**
+ * A retry now re-runs the ordinary sync, so it has to be handed the same saved
+ * settings every other sync route gets. Without them the retry would run on
+ * engine defaults, which means merge off and no user profile, and a retried
+ * workout would come back missing exactly what #614 was about.
+ */
+export async function retryPending(hevyId: string, opts: RecoveryOptions = {}, sql: Sql = getDb()) {
+  const saved = await loadSyncSettings(sql);
+  return engineRetryPending(buildSyncDeps(sql), hevyId, {
+    merge: saved.merge,
+    hrFusion: saved.hrFusion,
+    descriptionEnabled: saved.descriptionEnabled,
+    profile: saved.profile,
+    ...opts, // an explicit option still wins
+  } as RecoveryOptions);
 }

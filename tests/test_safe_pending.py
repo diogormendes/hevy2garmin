@@ -26,7 +26,9 @@ def test_complete_is_terminal_and_removes_pending(tmp_path: Path) -> None:
 def test_manual_resolution_removes_pending(tmp_path: Path) -> None:
     store = SQLiteDatabase(tmp_path / "sync.db")
     store.claim_pending("w1", {})
-    store.resolve_terminal("w1", status="manual", garmin_activity_id="123", reason="verified", source="manual")
+    store.resolve_terminal(
+        "w1", status="manual", garmin_activity_id="123", reason="verified", source="manual"
+    )
     assert store.get_pending("w1") is None
     row = store.get_recent_synced(1)[0]
     assert row["status"] == "manual"
@@ -37,8 +39,11 @@ def test_same_id_never_deletes_replacement(tmp_path: Path) -> None:
     store = SQLiteDatabase(tmp_path / "sync.db")
     store.claim_pending("w1", {"title": "Push", "description_enabled": False})
     store.update_pending(
-        "w1", phase="finalizing", next_step="delete",
-        garmin_activity_id="42", watch_activity_id="42",
+        "w1",
+        phase="finalizing",
+        next_step="delete",
+        garmin_activity_id="42",
+        watch_activity_id="42",
     )
     client = MagicMock()
     with patch("hevy2garmin.sync.delete_activity") as delete:
@@ -52,8 +57,11 @@ def test_finalize_null_watch_id_skips_delete(tmp_path: Path) -> None:
     store = SQLiteDatabase(tmp_path / "sync.db")
     store.claim_pending("w1", {"title": "Push", "description_enabled": False})
     store.update_pending(
-        "w1", phase="finalizing", next_step="delete",
-        garmin_activity_id="42", watch_activity_id=None,
+        "w1",
+        phase="finalizing",
+        next_step="delete",
+        garmin_activity_id="42",
+        watch_activity_id=None,
     )
     with patch("hevy2garmin.sync.delete_activity") as delete:
         result = finalize_pending(store, MagicMock(), store.get_pending("w1"))
@@ -68,7 +76,10 @@ def test_reconcile_without_candidate_never_uploads(tmp_path: Path) -> None:
     workout = {"start_time": "2026-01-01T10:00:00Z", "end_time": "2026-01-01T11:00:00Z"}
     store.claim_pending("w1", {"workout": workout})
     store.update_pending("w1", phase="processing", pre_upload_ids=["10"])
-    with patch("hevy2garmin.sync.activities_for_workout", return_value=[]), patch("hevy2garmin.sync.upload_fit") as upload:
+    with (
+        patch("hevy2garmin.sync.activities_for_workout", return_value=[]),
+        patch("hevy2garmin.sync.upload_fit") as upload,
+    ):
         result = reconcile_pending(store, MagicMock(), "w1")
     assert result.status == "processing"
     upload.assert_not_called()

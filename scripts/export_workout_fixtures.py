@@ -103,8 +103,10 @@ def main() -> int:
 
     OUT.write_text(json.dumps(sanitized, indent=1, ensure_ascii=False) + "\n")
     n_ex = sum(len(w["exercises"]) for w in sanitized)
-    print(f"wrote {OUT.relative_to(Path.cwd()) if OUT.is_relative_to(Path.cwd()) else OUT}: "
-          f"{len(sanitized)} workouts, {n_ex} exercises")
+    print(
+        f"wrote {OUT.relative_to(Path.cwd()) if OUT.is_relative_to(Path.cwd()) else OUT}: "
+        f"{len(sanitized)} workouts, {n_ex} exercises"
+    )
     return 0
 
 

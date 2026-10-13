@@ -6,17 +6,19 @@ import logging
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import date as _date, datetime, timedelta, timezone
+from datetime import date as _date
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from hevy2garmin import db
 from hevy2garmin.config import load_config
-from hevy2garmin.fit import generate_fit, _parse_timestamp
+from hevy2garmin.db_interface import Database
+from hevy2garmin.fit import _parse_timestamp, generate_fit
 from hevy2garmin.garmin import (
     GarminUploadRejected,
-    activity_matches_start_time,
     activities_for_workout,
+    activity_matches_start_time,
     create_workout,
     delete_activity,
     delete_workout,
@@ -32,19 +34,19 @@ from hevy2garmin.garmin import (
 )
 from hevy2garmin.hevy import HevyClient
 from hevy2garmin.mapper import lookup_exercise
+from hevy2garmin.merge import attempt_merge, reset_circuit_breaker
+from hevy2garmin.reconcile import reconcile_missing_routine_workouts
 from hevy2garmin.routine import (
     ROUTINE_DESC_MARKER,
     routine_to_garmin_workout,
     workout_content_hash,
 )
-from hevy2garmin.merge import attempt_merge, reset_circuit_breaker
-from hevy2garmin.reconcile import reconcile_missing_routine_workouts
-from hevy2garmin.db_interface import Database
 
 try:  # rate-limit HR fetches like other Garmin data calls
     from garmin_auth import RateLimiter
+
     _hr_limiter = RateLimiter(delay=1.0)
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     _hr_limiter = None
 
 logger = logging.getLogger("hevy2garmin")
@@ -121,7 +123,11 @@ def finalize_pending(store, client, pending: dict) -> SyncOneResult:
     try:
         if step == "rename":
             rename_activity(client, activity_id, payload.get("title", "Workout"))
-            step = "description" if payload.get("description_enabled") else ("delete" if watch_id else "commit")
+            step = (
+                "description"
+                if payload.get("description_enabled")
+                else ("delete" if watch_id else "commit")
+            )
             store.update_pending(wid, phase="finalizing", next_step=step, last_error=None)
         if step == "description":
             set_description(client, activity_id, payload.get("description", ""))
@@ -132,16 +138,29 @@ def finalize_pending(store, client, pending: dict) -> SyncOneResult:
                 step = "commit"
                 store.update_pending(wid, next_step=step, last_error=None)
             elif int(watch_id) == activity_id:
-                store.update_pending(wid, phase="needs_review", last_error="replacement equals watch activity; deletion blocked")
+                store.update_pending(
+                    wid,
+                    phase="needs_review",
+                    last_error="replacement equals watch activity; deletion blocked",
+                )
                 return SyncOneResult(status="needs_review", activity_id=activity_id)
             else:
                 try:
                     delete_activity(client, int(watch_id))
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001  # any failure of the delete is recorded and retried, never fatal
                     attempts = int(pending.get("delete_attempt_count") or 0) + 1
                     phase = "needs_review" if attempts >= 3 else "finalizing"
-                    store.update_pending(wid, phase=phase, next_step="delete", delete_attempt_count=attempts, last_error=str(exc)[:1000])
-                    return SyncOneResult(status="needs_review" if phase == "needs_review" else "processing", activity_id=activity_id)
+                    store.update_pending(
+                        wid,
+                        phase=phase,
+                        next_step="delete",
+                        delete_attempt_count=attempts,
+                        last_error=str(exc)[:1000],
+                    )
+                    return SyncOneResult(
+                        status="needs_review" if phase == "needs_review" else "processing",
+                        activity_id=activity_id,
+                    )
                 # Remove it from intervals.icu too, so the deleted watch copy
                 # doesn't linger there as a duplicate of the named activity
                 # that replaces it. No-op unless ICU credentials are set, and
@@ -154,8 +173,15 @@ def finalize_pending(store, client, pending: dict) -> SyncOneResult:
                 step = "commit"
                 store.update_pending(wid, next_step=step, last_error=None)
         _complete(store, wid, payload, activity_id)
-        return SyncOneResult(status="synced", activity_id=activity_id, sync_method=payload.get("sync_method", "upload"), merge_fallback=payload.get("merge_fallback", False), calories=payload.get("calories"), avg_hr=payload.get("avg_hr"))
-    except Exception as exc:
+        return SyncOneResult(
+            status="synced",
+            activity_id=activity_id,
+            sync_method=payload.get("sync_method", "upload"),
+            merge_fallback=payload.get("merge_fallback", False),
+            calories=payload.get("calories"),
+            avg_hr=payload.get("avg_hr"),
+        )
+    except Exception as exc:  # noqa: BLE001  # the workout is parked with the error, whatever raised it
         store.update_pending(wid, phase="finalizing", next_step=step, last_error=str(exc)[:1000])
         return SyncOneResult(status="processing", activity_id=activity_id)
 
@@ -177,12 +203,28 @@ def reconcile_pending(store, client, hevy_id: str) -> SyncOneResult:
                 continue
             try:
                 response = method(upload_id)
-                raw_id = response.get("activityId") or response.get("activity_id") or response.get("internalId") if isinstance(response, dict) else None
+                raw_id = (
+                    response.get("activityId")
+                    or response.get("activity_id")
+                    or response.get("internalId")
+                    if isinstance(response, dict)
+                    else None
+                )
                 resolved = int(str(raw_id).strip("'\"")) if raw_id else None
-            except Exception:
+            except (ValueError, TypeError, AttributeError):
                 continue
-            if resolved and str(resolved) not in {str(pending.get("watch_activity_id")), *map(str, pending.get("pre_upload_ids", []))}:
-                store.update_pending(hevy_id, phase="finalizing", next_step="rename", garmin_activity_id=str(resolved), resolution_source="upload_id", last_error=None)
+            if resolved and str(resolved) not in {
+                str(pending.get("watch_activity_id")),
+                *map(str, pending.get("pre_upload_ids", [])),
+            }:
+                store.update_pending(
+                    hevy_id,
+                    phase="finalizing",
+                    next_step="rename",
+                    garmin_activity_id=str(resolved),
+                    resolution_source="upload_id",
+                    last_error=None,
+                )
                 return finalize_pending(store, client, store.get_pending(hevy_id))
     phase = pending.get("phase")
     attempt_count = int(pending.get("attempt_count") or 0)
@@ -201,7 +243,7 @@ def reconcile_pending(store, client, hevy_id: str) -> SyncOneResult:
     workout = (pending.get("payload") or {}).get("workout") or {}
     try:
         activities = activities_for_workout(client, workout)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # the workout is parked with the error, whatever raised it
         store.update_pending(hevy_id, last_error=str(exc)[:1000])
         return SyncOneResult(status="processing")
     excluded = {str(x) for x in pending.get("pre_upload_ids", [])}
@@ -212,18 +254,30 @@ def reconcile_pending(store, client, hevy_id: str) -> SyncOneResult:
     # Snapshot-only recovery is deliberately strict: exactly one matching
     # DEVELOPMENT strength activity at the workout's start time.
     safe = [
-        a for a in candidates
+        a
+        for a in candidates
         if str(a.get("manufacturer", "")).upper() == "DEVELOPMENT"
         and (a.get("activityType") or {}).get("typeKey") in {"strength_training", "other"}
         and activity_matches_start_time(a, start_time)
     ]
     if len(safe) != 1:
         if candidates:
-            store.update_pending(hevy_id, phase="needs_review", last_error=f"{len(candidates)} unverified snapshot candidate(s)")
+            store.update_pending(
+                hevy_id,
+                phase="needs_review",
+                last_error=f"{len(candidates)} unverified snapshot candidate(s)",
+            )
             return SyncOneResult(status="needs_review")
         return SyncOneResult(status="processing")
     activity_id = _activity_id(safe[0])
-    store.update_pending(hevy_id, phase="finalizing", next_step="rename", garmin_activity_id=str(activity_id), resolution_source="snapshot", last_error=None)
+    store.update_pending(
+        hevy_id,
+        phase="finalizing",
+        next_step="rename",
+        garmin_activity_id=str(activity_id),
+        resolution_source="snapshot",
+        last_error=None,
+    )
     return finalize_pending(store, client, store.get_pending(hevy_id))
 
 
@@ -321,7 +375,9 @@ def sync_one_workout(
         pending = merge_store.get_pending(wid)
         if isinstance(pending, dict) and pending:
             status = _pending_status(pending)
-            logger.debug("Skipping %s (%s) — pending upload is %s", wid, title, pending.get("phase"))
+            logger.debug(
+                "Skipping %s (%s) — pending upload is %s", wid, title, pending.get("phase")
+            )
             return SyncOneResult(status=status)
 
     grace_minutes = cfg.get("sync", {}).get("grace_period_minutes", 120)
@@ -412,13 +468,21 @@ def sync_one_workout(
         from hevy2garmin.hr import HRBackupError, backup_activity_hr
 
         try:
-            protected_source_hr = backup_activity_hr(
-                merge_store, garmin_client, workout, merge_delete_id, _hr_limiter,
-            ) or None
+            protected_source_hr = (
+                backup_activity_hr(
+                    merge_store,
+                    garmin_client,
+                    workout,
+                    merge_delete_id,
+                    _hr_limiter,
+                )
+                or None
+            )
         except HRBackupError as exc:
             logger.warning(
                 "  ⚠ Could not durably back up HR from watch activity %s: %s",
-                merge_delete_id, exc,
+                merge_delete_id,
+                exc,
             )
             protected_source_hr = None
 
@@ -484,19 +548,13 @@ def sync_one_workout(
         from hevy2garmin.hr import extract_hevy_hr, hr_for_sync, merge_hr_sources
 
         if protected_source_hr:
-            hr_samples = merge_hr_sources(
-                extract_hevy_hr(workout), protected_source_hr
-            ) or None
+            hr_samples = merge_hr_sources(extract_hevy_hr(workout), protected_source_hr) or None
         else:
-            hr_samples = hr_for_sync(
-                merge_store, garmin_client, workout, cfg, _hr_limiter
-            )
+            hr_samples = hr_for_sync(merge_store, garmin_client, workout, cfg, _hr_limiter)
         if not hr_samples:
             # One retry — the watch's daily HR for this window may not
             # have settled on the first try.
-            hr_samples = hr_for_sync(
-                merge_store, garmin_client, workout, cfg, _hr_limiter
-            )
+            hr_samples = hr_for_sync(merge_store, garmin_client, workout, cfg, _hr_limiter)
 
     with tempfile.TemporaryDirectory() as tmp:
         fit_path = str(Path(tmp) / f"{wid}.fit")
@@ -532,7 +590,13 @@ def sync_one_workout(
             activity_id = existing_id
         else:
             sync_method = "upload_fallback" if merge_mode else "upload"
-            desc = generate_description(workout, calories=result.get("calories"), avg_hr=result.get("avg_hr")) if description_enabled else ""
+            desc = (
+                generate_description(
+                    workout, calories=result.get("calories"), avg_hr=result.get("avg_hr")
+                )
+                if description_enabled
+                else ""
+            )
             pending_payload = {
                 "workout": workout,
                 "title": title,
@@ -554,7 +618,13 @@ def sync_one_workout(
             except Exception:
                 merge_store.delete_pending(wid)
                 raise
-            merge_store.update_pending(wid, pre_upload_ids=snapshot_ids, watch_activity_id=str(merge_delete_id) if merge_delete_id else None, phase="processing", attempt_count=1)
+            merge_store.update_pending(
+                wid,
+                pre_upload_ids=snapshot_ids,
+                watch_activity_id=str(merge_delete_id) if merge_delete_id else None,
+                phase="processing",
+                attempt_count=1,
+            )
             try:
                 upload_result = upload_fit(
                     garmin_client,
@@ -565,24 +635,39 @@ def sync_one_workout(
             except GarminUploadRejected as exc:
                 merge_store.update_pending(wid, phase="failed", last_error=str(exc)[:1000])
                 return SyncOneResult(status="failed", merge_fallback=merge_fallback)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001  # the request may have reached Garmin; park it whatever raised
                 # The request may have reached Garmin. Park it; never resubmit automatically.
                 merge_store.update_pending(wid, phase="processing", last_error=str(exc)[:1000])
                 return SyncOneResult(status="processing", merge_fallback=merge_fallback)
             raw_id = upload_result.get("activity_id")
             activity_id = int(raw_id) if raw_id and str(raw_id).isdigit() else None
             upload_id = upload_result.get("upload_id")
-            merge_store.update_pending(wid, upload_id=str(upload_id) if upload_id else None, last_error=None)
-            if activity_id and str(activity_id) not in set(snapshot_ids) and (not merge_delete_id or activity_id != int(merge_delete_id)):
-                merge_store.update_pending(wid, phase="finalizing", next_step="rename", garmin_activity_id=str(activity_id), resolution_source="response")
+            merge_store.update_pending(
+                wid, upload_id=str(upload_id) if upload_id else None, last_error=None
+            )
+            if (
+                activity_id
+                and str(activity_id) not in set(snapshot_ids)
+                and (not merge_delete_id or activity_id != int(merge_delete_id))
+            ):
+                merge_store.update_pending(
+                    wid,
+                    phase="finalizing",
+                    next_step="rename",
+                    garmin_activity_id=str(activity_id),
+                    resolution_source="response",
+                )
                 if isinstance(merge_store, Database):
                     pending_after = merge_store.get_pending(wid)
                 else:
                     pending_after = {
-                        "hevy_id": wid, "phase": "finalizing", "next_step": "rename",
+                        "hevy_id": wid,
+                        "phase": "finalizing",
+                        "next_step": "rename",
                         "garmin_activity_id": str(activity_id),
                         "watch_activity_id": str(merge_delete_id) if merge_delete_id else None,
-                        "payload": pending_payload, "delete_attempt_count": 0,
+                        "payload": pending_payload,
+                        "delete_attempt_count": 0,
                     }
                 finalized = finalize_pending(merge_store, garmin_client, pending_after)
                 finalized.no_hr = bool(hr_fusion_on and not hr_samples)
@@ -758,7 +843,7 @@ def sync(
                     stats["merge_fallback"] += 1
             if one.no_hr:
                 stats["no_hr"] += 1
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # one workout must not stop the run
             logger.error("  ✗ Failed to sync %s: %s", wid, e)
             stats["failed"] += 1
 
@@ -772,14 +857,19 @@ def sync(
     # nothing synced — a silent run is indistinguishable from a dead one.
     logger.info(
         "Sync run complete: %d synced, %d skipped, %d failed, %d deferred, %d processing (of %d fetched)",
-        stats["synced"], stats["skipped"], stats["failed"],
-        stats["deferred"], stats["processing"], stats["total"],
+        stats["synced"],
+        stats["skipped"],
+        stats["failed"],
+        stats["deferred"],
+        stats["processing"],
+        stats["total"],
     )
 
     # Log-only duplicate scan (best-effort; never breaks a sync).
     if not dry_run and garmin_client:
         try:
             from hevy2garmin.reconcile import detect_duplicates
+
             dups = detect_duplicates(garmin_client, workouts, _hr_limiter)
             stats["duplicates"] = len(dups)
             if dups:
@@ -852,7 +942,7 @@ def _reschedule_routine(
         for old_id in store.get_routine_schedule_ids(hevy_routine_id):
             try:
                 unschedule_workout(client, old_id)
-            except Exception:
+            except Exception:  # noqa: BLE001  # best-effort Garmin step
                 logger.warning("  Could not unschedule stale calendar entry %s", old_id)
     store.clear_routine_schedules(hevy_routine_id)
     for day in dates:
@@ -875,7 +965,7 @@ def _build_library_by_name(garmin_client) -> tuple[dict[str, list[dict]], list[d
     library_by_name: dict[str, list[dict]] = {}
     try:
         raw_workouts = list_workouts(garmin_client, limit=999)
-    except Exception:
+    except Exception:  # noqa: BLE001  # the Garmin client raises many types; dedup falls back to the DB
         logger.warning("Could not list Garmin workouts; falling back to DB-only dedup")
         return {}, None
     for w in raw_workouts:
@@ -962,7 +1052,9 @@ def _sync_one_routine(
             verb = "update" if existing else "create"
             logger.info(
                 "[dry-run] Would %s Garmin workout '%s' with %d step(s)",
-                verb, title, len(payload["workoutSegments"][0]["workoutSteps"]),
+                verb,
+                title,
+                len(payload["workoutSegments"][0]["workoutSteps"]),
             )
             return {"outcome": outcome, "scheduled": 0}
 
@@ -971,18 +1063,21 @@ def _sync_one_routine(
         # (an orphan from a crash or DB reset). Same-named entries without the marker are
         # the user's own workouts and are left untouched.
         stale_ids = set()
-        if existing and existing.get("garmin_workout_id"):
-            # A workout already flagged missing is gone from Garmin — deleting it
-            # again would only burn a rate-limited 404.
-            if existing.get("status") != "missing_on_garmin":
-                stale_ids.add(str(existing["garmin_workout_id"]))
+        # A workout already flagged missing is gone from Garmin: deleting it again would only
+        # burn a rate-limited 404.
+        if (
+            existing
+            and existing.get("garmin_workout_id")
+            and existing.get("status") != "missing_on_garmin"
+        ):
+            stale_ids.add(str(existing["garmin_workout_id"]))
         for entry in library_by_name.get(payload["workoutName"], []):
             if ROUTINE_DESC_MARKER in entry["description"]:
                 stale_ids.add(entry["id"])
         for wid in stale_ids:
             try:
                 delete_workout(garmin_client, wid)
-            except Exception:
+            except Exception:  # noqa: BLE001  # best-effort Garmin step
                 logger.warning("  Could not delete stale/orphan workout %s", wid)
 
         workout_id = create_workout(garmin_client, payload)
@@ -1001,7 +1096,7 @@ def _sync_one_routine(
         if schedule_date:
             dates_to_book = [schedule_date]
         else:
-            today = _date.today().isoformat()
+            today = datetime.now(tz=timezone.utc).astimezone().date().isoformat()
             prior_dates = store.get_routine_scheduled_dates(rid)
             if not prior_dates and (existing or {}).get("scheduled_date"):
                 prior_dates = [existing["scheduled_date"]]
@@ -1018,9 +1113,13 @@ def _sync_one_routine(
             # Persist the created workout before scheduling, marked 'schedule_pending', so
             # a schedule failure leaves it tracked (recovered next sync) not orphaned.
             store.mark_routine_synced(
-                rid, garmin_workout_id=str(workout_id), title=title,
-                hevy_updated_at=updated_at, scheduled_date=effective_schedule_date,
-                content_hash=content_hash, status="schedule_pending",
+                rid,
+                garmin_workout_id=str(workout_id),
+                title=title,
+                hevy_updated_at=updated_at,
+                scheduled_date=effective_schedule_date,
+                content_hash=content_hash,
+                status="schedule_pending",
             )
             # The old workout (and its calendar entries) was just deleted, so its tracked
             # ids are already gone — clear+rebook without a rate-limited unschedule per id.
@@ -1031,8 +1130,11 @@ def _sync_one_routine(
                 scheduled = 1
 
         store.mark_routine_synced(
-            rid, garmin_workout_id=str(workout_id), title=title,
-            hevy_updated_at=updated_at, scheduled_date=effective_schedule_date,
+            rid,
+            garmin_workout_id=str(workout_id),
+            title=title,
+            hevy_updated_at=updated_at,
+            scheduled_date=effective_schedule_date,
             content_hash=content_hash,
         )
         return {"outcome": outcome, "scheduled": scheduled}
@@ -1103,16 +1205,26 @@ def sync_routines(
 
     for routine in routines:
         res = _sync_one_routine(
-            routine, store, garmin_client, library_by_name,
-            weight_unit=weight_unit, default_rest_seconds=default_rest_seconds,
-            schedule_date=schedule_date, force=force, dry_run=dry_run,
+            routine,
+            store,
+            garmin_client,
+            library_by_name,
+            weight_unit=weight_unit,
+            default_rest_seconds=default_rest_seconds,
+            schedule_date=schedule_date,
+            force=force,
+            dry_run=dry_run,
         )
         stats[res["outcome"]] += 1
         stats["scheduled"] += res["scheduled"]
 
     logger.info(
         "Routine sync done — created=%d updated=%d skipped=%d failed=%d scheduled=%d",
-        stats["created"], stats["updated"], stats["skipped"], stats["failed"], stats["scheduled"],
+        stats["created"],
+        stats["updated"],
+        stats["skipped"],
+        stats["failed"],
+        stats["scheduled"],
     )
     return stats
 
@@ -1141,9 +1253,7 @@ def sync_routine(
     weight_unit, default_rest_seconds = _hash_inputs(cfg)
 
     hevy = HevyClient(api_key=hevy_api_key)
-    routine = next(
-        (r for r in fetch_all_routines(hevy) if r.get("id") == hevy_routine_id), None
-    )
+    routine = next((r for r in fetch_all_routines(hevy) if r.get("id") == hevy_routine_id), None)
     if routine is None:
         raise ValueError("Routine not found in Hevy")
 
@@ -1152,9 +1262,15 @@ def sync_routine(
     library_by_name, garmin_workouts = _build_library_by_name(garmin_client)
     reconcile_missing_routine_workouts(store, garmin_workouts)
     res = _sync_one_routine(
-        routine, store, garmin_client, library_by_name,
-        weight_unit=weight_unit, default_rest_seconds=default_rest_seconds,
-        schedule_date=None, force=force, dry_run=False,
+        routine,
+        store,
+        garmin_client,
+        library_by_name,
+        weight_unit=weight_unit,
+        default_rest_seconds=default_rest_seconds,
+        schedule_date=None,
+        force=force,
+        dry_run=False,
     )
 
     record = store.get_synced_routine(hevy_routine_id)

@@ -9,10 +9,11 @@ import io
 import logging
 import time
 from pathlib import Path
-from hevy2garmin._isotime import parse_iso
 
-from garminconnect import Garmin
 from garmin_auth import GarminAuth, RateLimiter
+from garminconnect import Garmin
+
+from hevy2garmin._isotime import parse_iso
 
 logger = logging.getLogger("hevy2garmin")
 
@@ -50,11 +51,13 @@ def auth_kwargs(
     direct login so the choice is made in exactly one place.
     """
     from hevy2garmin.db import get_database_url
+
     database_url = get_database_url()
 
     kwargs: dict = {"email": email, "password": password}
     if database_url:
         from garmin_auth.storage import DBTokenStore
+
         kwargs["store"] = DBTokenStore(database_url)
         # Use /tmp for garth token files on read-only filesystems (Vercel)
         kwargs["token_dir"] = "/tmp/.garminconnect"
@@ -111,15 +114,19 @@ def upload_fit(
         resp = _limiter.call(client.upload_activity, str(fit_path))
     except Exception as e:
         # Extract response body from exception chain for debugging
-        response = getattr(e, 'response', None)
+        response = getattr(e, "response", None)
         if response is None and e.__cause__:
-            response = getattr(e.__cause__, 'response', None)
+            response = getattr(e.__cause__, "response", None)
         if response is None and e.__context__:
-            response = getattr(e.__context__, 'response', None)
+            response = getattr(e.__context__, "response", None)
         if response is not None:
-            body = response.text[:2000] if hasattr(response, 'text') else str(response)
-            logger.error("Upload rejected — status=%s body=%s", getattr(response, 'status_code', '?'), body)
-            raise RuntimeError(f"Garmin upload failed ({getattr(response, 'status_code', '?')}): {body}") from e
+            body = response.text[:2000] if hasattr(response, "text") else str(response)
+            logger.error(
+                "Upload rejected — status=%s body=%s", getattr(response, "status_code", "?"), body
+            )
+            raise RuntimeError(
+                f"Garmin upload failed ({getattr(response, 'status_code', '?')}): {body}"
+            ) from e
         logger.error("Upload failed (no response): %s", str(e)[:300])
         raise
     upload_id = None
@@ -177,7 +184,9 @@ def upload_fit(
     if activity_id:
         logger.info("  Found activity %s", activity_id)
     else:
-        logger.warning("  Could not find activity ID after upload. Workout will appear as 'Strength Training' on Garmin.")
+        logger.warning(
+            "  Could not find activity ID after upload. Workout will appear as 'Strength Training' on Garmin."
+        )
 
     return {"upload_id": upload_id, "activity_id": activity_id}
 
@@ -245,7 +254,7 @@ def find_activity_by_start_time(
 
     try:
         activities = _limiter.call(client.get_activities_by_date, date_from, date_to)
-    except Exception:
+    except Exception:  # noqa: BLE001  # the Garmin client raises many types; a failed lookup is "unknown"
         return None
 
     excluded = {str(activity_id) for activity_id in (exclude_activity_ids or [])}
@@ -288,11 +297,14 @@ def delete_activity(client: Garmin, activity_id: int) -> None:
     logger.info("  Deleted activity %s", activity_id)
 
 
-def upload_image(client: Garmin, activity_id: int, image_bytes: bytes, filename: str = "image.png") -> None:
+def upload_image(
+    client: Garmin, activity_id: int, image_bytes: bytes, filename: str = "image.png"
+) -> None:
     """Upload an image to a Garmin activity."""
     files = {"file": (filename, io.BytesIO(image_bytes))}
     client.client.request(
-        "POST", "connectapi",
+        "POST",
+        "connectapi",
         f"/activity-service/activity/{activity_id}/image",
         files=files,
     )
@@ -342,14 +354,14 @@ def find_matching_garmin_activity(
     search_end = (hevy_end + timedelta(hours=2)).date().isoformat()
     try:
         activities = _limiter.call(client.get_activities_by_date, search_start, search_end)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the Garmin client raises many types; merge falls back
         logger.warning("Could not query Garmin activities for merge: %s", e)
         return None
 
     best_score = 0.0
     best: dict | None = None
 
-    for act in (activities or []):
+    for act in activities or []:
         # Hard filter: only configured activity types are eligible for merge
         act_type = act.get("activityType", {}).get("typeKey", "")
         if act_type not in activity_types:
@@ -380,8 +392,12 @@ def find_matching_garmin_activity(
             continue
 
         # Compute temporal overlap
-        overlap_start = max(hevy_start.replace(tzinfo=timezone.utc), act_start.replace(tzinfo=timezone.utc))
-        overlap_end = min(hevy_end.replace(tzinfo=timezone.utc), act_end.replace(tzinfo=timezone.utc))
+        overlap_start = max(
+            hevy_start.replace(tzinfo=timezone.utc), act_start.replace(tzinfo=timezone.utc)
+        )
+        overlap_end = min(
+            hevy_end.replace(tzinfo=timezone.utc), act_end.replace(tzinfo=timezone.utc)
+        )
         overlap_s = max(0.0, (overlap_end - overlap_start).total_seconds())
         overlap_pct = overlap_s / hevy_duration
 
@@ -389,7 +405,11 @@ def find_matching_garmin_activity(
             continue
 
         # Check start drift
-        drift_s = abs((act_start.replace(tzinfo=timezone.utc) - hevy_start.replace(tzinfo=timezone.utc)).total_seconds())
+        drift_s = abs(
+            (
+                act_start.replace(tzinfo=timezone.utc) - hevy_start.replace(tzinfo=timezone.utc)
+            ).total_seconds()
+        )
         drift_min = drift_s / 60
         if drift_min > max_drift_minutes:
             continue
@@ -403,7 +423,9 @@ def find_matching_garmin_activity(
     if best:
         logger.info(
             "Merge match: Garmin activity %s (overlap %.0f%%, drift %.1fmin)",
-            best.get("activityId"), best_score, 0,
+            best.get("activityId"),
+            best_score,
+            0,
         )
     return best
 
@@ -426,7 +448,11 @@ def push_exercise_sets(client: Garmin, activity_id: int, payload: dict) -> None:
     url = f"/activity-service/activity/{activity_id}/exerciseSets"
     time.sleep(1.0)  # manual rate limit
     client.client.request("PUT", "connectapi", url, json=payload)
-    logger.info("  Pushed %d exercise sets to activity %s", len(payload.get("exerciseSets", [])), activity_id)
+    logger.info(
+        "  Pushed %d exercise sets to activity %s",
+        len(payload.get("exerciseSets", [])),
+        activity_id,
+    )
 
 
 def create_workout(client: Garmin, payload: dict) -> int | None:
@@ -442,9 +468,7 @@ def create_workout(client: Garmin, payload: dict) -> int | None:
     activity endpoints' 204s.
     """
     time.sleep(1.0)  # manual rate limit
-    resp = client.client.request(
-        "POST", "connectapi", "/workout-service/workout", json=payload
-    )
+    resp = client.client.request("POST", "connectapi", "/workout-service/workout", json=payload)
     data = resp.json() if hasattr(resp, "json") else resp
     workout_id = data.get("workoutId") if isinstance(data, dict) else None
     logger.info("  Created Garmin workout %s ('%s')", workout_id, payload.get("workoutName"))
@@ -468,7 +492,7 @@ def list_workouts(client: Garmin, limit: int = 100) -> list[dict]:
     )
     data = resp.json() if hasattr(resp, "json") else resp
     if not isinstance(data, list):
-        raise RuntimeError(
+        raise TypeError(
             f"Garmin workout listing returned a {type(data).__name__}, not a list; "
             "treating as unknown rather than empty"
         )
@@ -478,9 +502,7 @@ def list_workouts(client: Garmin, limit: int = 100) -> list[dict]:
 def delete_workout(client: Garmin, workout_id: int | str) -> None:
     """Delete a saved Garmin workout (used to recreate one after a routine edit)."""
     time.sleep(1.0)  # manual rate limit
-    client.client.request(
-        "DELETE", "connectapi", f"/workout-service/workout/{workout_id}"
-    )
+    client.client.request("DELETE", "connectapi", f"/workout-service/workout/{workout_id}")
     logger.info("  Deleted Garmin workout %s", workout_id)
 
 
@@ -503,20 +525,20 @@ def schedule_workout(client: Garmin, workout_id: int | str, date: str) -> int | 
     try:
         data = resp.json() if hasattr(resp, "json") else resp
         return data.get("workoutScheduleId") if isinstance(data, dict) else None
-    except Exception:
+    except Exception:  # noqa: BLE001  # a malformed response body is "no schedule id"
         return None
 
 
 def unschedule_workout(client: Garmin, scheduled_id: int | str) -> None:
     """Remove a calendar entry (``workoutScheduleId``) without deleting the workout."""
     time.sleep(1.0)  # manual rate limit
-    client.client.request(
-        "DELETE", "connectapi", f"/workout-service/schedule/{scheduled_id}"
-    )
+    client.client.request("DELETE", "connectapi", f"/workout-service/schedule/{scheduled_id}")
     logger.info("  Unscheduled Garmin calendar entry %s", scheduled_id)
 
 
-def generate_description(workout: dict, calories: int | None = None, avg_hr: int | None = None) -> str:
+def generate_description(
+    workout: dict, calories: int | None = None, avg_hr: int | None = None
+) -> str:
     """Generate a text description for a gym workout."""
     lines: list[str] = []
     title = workout.get("title", "Workout")
@@ -525,14 +547,12 @@ def generate_description(workout: dict, calories: int | None = None, avg_hr: int
     start = workout.get("start_time") or workout.get("startTime", "")
     end = workout.get("end_time") or workout.get("endTime", "")
     if start and end:
-        from datetime import datetime
         try:
-            fmt = "%Y-%m-%dT%H:%M:%S%z" if "T" in start else "%Y-%m-%d %H:%M:%S"
             t0 = parse_iso(start)
             t1 = parse_iso(end)
             duration_s = int((t1 - t0).total_seconds())
-        except Exception:
-            pass
+        except (ValueError, TypeError):
+            pass  # unparseable timestamps: the duration stays unknown
 
     lines.append(f"🏋️ {title}")
     if duration_s > 0:
@@ -549,19 +569,19 @@ def generate_description(workout: dict, calories: int | None = None, avg_hr: int
         for ex in exercises:
             name = ex.get("title") or ex.get("name", "Unknown")
             all_sets = ex.get("sets", [])
-            normal = [s for s in all_sets if s.get("type") == "normal"]
+            working = [s for s in all_sets if s.get("type") != "warmup"]
             warmup = [s for s in all_sets if s.get("type") == "warmup"]
-            if normal:
-                n_label = "set" if len(normal) == 1 else "sets"
+            if working:
+                n_label = "set" if len(working) == 1 else "sets"
                 # Check if this is a cardio exercise (has distance or duration, no weight/reps)
-                has_distance = any(s.get("distance_meters") for s in normal)
-                has_duration = any(s.get("duration_seconds") for s in normal)
-                has_weight = any(s.get("weight_kg") or s.get("weight") for s in normal)
+                has_distance = any(s.get("distance_meters") for s in working)
+                has_duration = any(s.get("duration_seconds") for s in working)
+                has_weight = any(s.get("weight_kg") or s.get("weight") for s in working)
                 if has_distance or (has_duration and not has_weight):
                     # Cardio: show distance and/or duration
-                    total_dist = sum(s.get("distance_meters", 0) or 0 for s in normal)
-                    total_dur = sum(s.get("duration_seconds", 0) or 0 for s in normal)
-                    parts = [f"{len(normal)} {n_label}"]
+                    total_dist = sum(s.get("distance_meters", 0) or 0 for s in working)
+                    total_dur = sum(s.get("duration_seconds", 0) or 0 for s in working)
+                    parts = [f"{len(working)} {n_label}"]
                     if total_dist > 0:
                         parts.append(f"{total_dist / 1000:.1f}km")
                     if total_dur > 0:
@@ -569,16 +589,16 @@ def generate_description(workout: dict, calories: int | None = None, avg_hr: int
                     lines.append(f"• {name}: {' · '.join(parts)}")
                 else:
                     weights = [
-                        w for s in normal
+                        w
+                        for s in working
                         if (w := (s.get("weight_kg") or s.get("weight"))) is not None
                     ]
-                    reps = [
-                        r for s in normal
-                        if (r := s.get("reps")) is not None
-                    ]
+                    reps = [r for s in working if (r := s.get("reps")) is not None]
                     top_weight = max(weights) if weights else 0
                     top_reps = max(reps) if reps else 0
-                    lines.append(f"• {name}: {len(normal)} {n_label} · {top_weight:.1f}kg × {top_reps}")
+                    lines.append(
+                        f"• {name}: {len(working)} {n_label} · {top_weight:.1f}kg × {top_reps}"
+                    )
             elif warmup:
                 s_label = "set" if len(warmup) == 1 else "sets"
                 lines.append(f"• {name}: {len(warmup)} warmup {s_label}")

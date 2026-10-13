@@ -2,18 +2,21 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { withBasePath } from "@/lib/base-path";
 
 /**
  * Connect-Garmin form for the setup page. Three modes:
  *   1. email/password → POST /api/garmin-login
  *   2. two-factor code → POST /api/garmin-login-mfa (when step 1 returns needs_mfa)
  *   3. manual ticket fallback → sign in on Garmin's own widget, paste the
- *      resulting ST-… ticket, exchange it at the CF Worker /exchange for DI
- *      tokens, then POST /api/garmin-ticket. Revealed when Garmin forces a
+ *      resulting ST-… ticket, exchange it for DI tokens (at the CF Worker
+ *      /exchange, or with `directLogin` at this server's
+ *      /api/garmin-ticket-exchange), then POST /api/garmin-ticket. Revealed when Garmin forces a
  *      captcha (needs_captcha), or on demand via "having trouble?".
  *
  * Credentials are forwarded to the login Worker only to obtain a token and are
- * never stored or echoed back.
+ * never stored or echoed back. With `directLogin` (H2G_DIRECT_GARMIN_LOGIN, #685)
+ * no Worker is involved: the server signs in to Garmin itself.
  */
 
 // The Garmin embed sign-in widget (opens in a new tab); after login the URL
@@ -25,7 +28,10 @@ const GARMIN_SSO_URL =
   "&source=https://sso.garmin.com/sso/embed" +
   "&redirectAfterAccountLoginUrl=https://sso.garmin.com/sso/embed" +
   "&redirectAfterAccountCreationUrl=https://sso.garmin.com/sso/embed";
-const WORKER_EXCHANGE_URL = "https://hevy2garmin-exchange-di.gkos.workers.dev/exchange";
+// The ticket exchange on the shared Garmin SSO worker (garmin-auth's
+// DEFAULT_SSO_WORKER_URL). The old hevy2garmin-exchange-di worker was deleted
+// in 2026-09 (garmin-auth#47) and answers 404.
+export const WORKER_EXCHANGE_URL = "https://garmin-auth-sso.gkos.workers.dev/exchange";
 
 /** Pull the ST-… ticket out of a pasted embed URL, or accept a raw ticket. */
 function extractTicket(raw: string): string | null {
@@ -35,7 +41,7 @@ function extractTicket(raw: string): string | null {
   return t.startsWith("ST-") ? t : null;
 }
 
-export function ConnectGarmin({ connected }: { connected: boolean }) {
+export function ConnectGarmin({ connected, directLogin = false }: { connected: boolean; directLogin?: boolean }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -69,7 +75,7 @@ export function ConnectGarmin({ connected }: { connected: boolean }) {
     }
     setBusy(true);
     try {
-      const res = await fetch("/api/garmin-login", {
+      const res = await fetch(withBasePath("/api/garmin-login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password }),
@@ -104,7 +110,7 @@ export function ConnectGarmin({ connected }: { connected: boolean }) {
     }
     setBusy(true);
     try {
-      const res = await fetch("/api/garmin-login-mfa", {
+      const res = await fetch(withBasePath("/api/garmin-login-mfa"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId, mfa_code: mfaCode.trim() }),
@@ -122,7 +128,7 @@ export function ConnectGarmin({ connected }: { connected: boolean }) {
   /** Best-effort record of a Garmin rate-limit cooldown. */
   async function recordCooldown() {
     try {
-      await fetch("/api/garmin-rate-limited", { method: "POST" });
+      await fetch(withBasePath("/api/garmin-rate-limited"), { method: "POST" });
     } catch {
       /* best-effort */
     }
@@ -138,8 +144,9 @@ export function ConnectGarmin({ connected }: { connected: boolean }) {
     }
     setBusy(true);
     try {
-      // Exchange the ticket for DI tokens at the CF Worker (returns them directly).
-      const ex = await fetch(WORKER_EXCHANGE_URL, {
+      // Exchange the ticket for DI tokens: at the CF Worker, or on this server
+      // when direct login is on, so the ticket goes nowhere but Garmin.
+      const ex = await fetch(directLogin ? withBasePath("/api/garmin-ticket-exchange") : WORKER_EXCHANGE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticket }),
@@ -154,7 +161,7 @@ export function ConnectGarmin({ connected }: { connected: boolean }) {
         setError(tokens.error ?? "That ticket could not be exchanged. Sign in again for a fresh one.");
         return;
       }
-      const res = await fetch("/api/garmin-ticket", {
+      const res = await fetch(withBasePath("/api/garmin-ticket"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

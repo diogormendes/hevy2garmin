@@ -60,6 +60,7 @@ def _patch_fit_tool_lenient_strings() -> None:
     read_strings_from_bytes._h2g_lenient = True  # type: ignore[attr-defined]
     Field.read_strings_from_bytes = read_strings_from_bytes  # type: ignore[method-assign]
 
+
 _HR_BACKUP_PREFIX = "hr_backup_"
 
 
@@ -84,7 +85,11 @@ def extract_hevy_hr(workout: dict) -> list[dict]:
     raw = workout.get("heart_rate") or workout.get("heartRate") or workout.get("hr_samples")
     if isinstance(raw, list):
         for entry in raw:
-            if isinstance(entry, dict) and entry.get("hr") is not None and entry.get("time") is not None:
+            if (
+                isinstance(entry, dict)
+                and entry.get("hr") is not None
+                and entry.get("time") is not None
+            ):
                 samples.append({"time": max(0.0, float(entry["time"])), "hr": int(entry["hr"])})
             elif isinstance(entry, (list, tuple)) and len(entry) >= 2 and entry[1] is not None:
                 samples.append({"time": max(0.0, float(entry[0])), "hr": int(entry[1])})
@@ -111,9 +116,9 @@ def fetch_watch_hr(garmin_client, workout: dict, limiter=None) -> list[dict]:
 
     try:
         date_str = str(w_start)[:10]
-        call = (limiter.call if limiter is not None else (lambda f, *a: f(*a)))
+        call = limiter.call if limiter is not None else (lambda f, *a: f(*a))
         daily_hr = call(garmin_client.get_heart_rates, date_str)
-    except Exception as e:  # pragma: no cover - network/auth failure path
+    except Exception as e:  # noqa: BLE001  # pragma: no cover - network/auth failure path
         logger.debug("watch HR fetch failed: %s", e)
         return []
 
@@ -144,9 +149,10 @@ def fetch_activity_hr(
     Returns an empty list on any download or parse failure so callers can fall
     back to Garmin's coarser daily HR feed.
     """
-    from garminconnect import Garmin
     from fit_tool.fit_file import FitFile
     from fit_tool.profile.messages.record_message import RecordMessage
+    from garminconnect import Garmin
+
     from hevy2garmin.fit import _parse_timestamp
 
     start_raw = workout.get("start_time") or workout.get("startTime", "")
@@ -158,7 +164,7 @@ def fetch_activity_hr(
     start_ms = int(start_dt.timestamp() * 1000)
 
     try:
-        call = (limiter.call if limiter is not None else (lambda f, *a: f(*a)))
+        call = limiter.call if limiter is not None else (lambda f, *a: f(*a))
         downloaded = call(
             garmin_client.download_activity,
             str(activity_id),
@@ -173,7 +179,11 @@ def fetch_activity_hr(
         if zipfile.is_zipfile(stream):
             with zipfile.ZipFile(stream) as archive:
                 fit_member = next(
-                    (member for member in archive.infolist() if member.filename.lower().endswith(".fit")),
+                    (
+                        member
+                        for member in archive.infolist()
+                        if member.filename.lower().endswith(".fit")
+                    ),
                     None,
                 )
                 if fit_member is None:
@@ -192,7 +202,7 @@ def fetch_activity_hr(
             fit_file = FitFile.from_bytes(fit_bytes, check_crc=False)
         finally:
             fit_logger.setLevel(previous_level)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # download and FIT parsing both fail in many ways; no HR is the outcome
         logger.warning("activity %s: HR download/parse failed: %s", activity_id, exc)
         return []
 
@@ -225,16 +235,20 @@ def fetch_activity_hr(
         if not 0 < bpm_int < 256:
             continue
         hr_record_count += 1
-        samples.append({
-            "time": max(0.0, (timestamp_ms - start_ms) / 1000.0),
-            "hr": bpm_int,
-        })
+        samples.append(
+            {
+                "time": max(0.0, (timestamp_ms - start_ms) / 1000.0),
+                "hr": bpm_int,
+            }
+        )
 
     if not samples:
         logger.warning(
             "activity %s: no heart-rate samples extracted (%d record messages, "
             "%d with valid HR); replacement will fall back to keeping the watch copy",
-            activity_id, record_count, hr_record_count,
+            activity_id,
+            record_count,
+            hr_record_count,
         )
     samples.sort(key=lambda sample: sample["time"])
     return samples
@@ -302,12 +316,8 @@ def load_hr_backup(database, workout: dict) -> list[dict]:
         return []
 
     stored_start = _parse_timestamp(backup.get("workout_start", ""))
-    current_start = _parse_timestamp(
-        workout.get("start_time") or workout.get("startTime", "")
-    )
-    current_end = _parse_timestamp(
-        workout.get("end_time") or workout.get("endTime", "")
-    )
+    current_start = _parse_timestamp(workout.get("start_time") or workout.get("startTime", ""))
+    current_end = _parse_timestamp(workout.get("end_time") or workout.get("endTime", ""))
     shift_s = (
         (stored_start - current_start).total_seconds()
         if stored_start is not None and current_start is not None
@@ -344,9 +354,7 @@ def backup_activity_hr(
     limiter=None,
 ) -> list[dict]:
     """Extract and durably save activity HR before any destructive action."""
-    samples = fetch_activity_hr(
-        garmin_client, source_activity_id, workout, limiter
-    )
+    samples = fetch_activity_hr(garmin_client, source_activity_id, workout, limiter)
     if not samples:
         return []
     try:
@@ -367,9 +375,7 @@ def require_activity_hr_backup(
     limiter=None,
 ) -> list[dict]:
     """Return protected activity HR or stop before the source can be deleted."""
-    protected = backup_activity_hr(
-        database, garmin_client, workout, source_activity_id, limiter
-    )
+    protected = backup_activity_hr(database, garmin_client, workout, source_activity_id, limiter)
     if not protected:
         protected = load_hr_backup(database, workout)
     if not protected:
@@ -421,7 +427,7 @@ def build_workout_hr(
     Daily passive HR remains the best-effort fallback for ordinary uploads or
     when Garmin does not make the original activity downloadable.
     """
-    hevy_hr = extract_hevy_hr(workout)        # AirPods / in-workout (empty today)
+    hevy_hr = extract_hevy_hr(workout)  # AirPods / in-workout (empty today)
     activity_hr = (
         fetch_activity_hr(garmin_client, source_activity_id, workout, limiter)
         if source_activity_id is not None

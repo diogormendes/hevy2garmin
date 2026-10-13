@@ -7,12 +7,21 @@ const h = vi.hoisted(() => ({
     retryPending: vi.fn(async (_deps: unknown, _id: string, _opts: unknown) => ({ status: "synced", garminActivityId: 555, error: null })),
   },
   ps: { getPending: vi.fn(async (_id: string, _sql: unknown) => null) },
+  settings: {
+    loadSyncSettings: vi.fn(async (_sql: unknown) => ({
+      merge: { enabled: true, watchStrategy: "merge" },
+      hrFusion: true,
+      descriptionEnabled: true,
+      profile: { age: 30 },
+    })),
+  },
 }));
 vi.mock("hevy2garmin", async (importOriginal) => ({ ...(await importOriginal<object>()), ...h.engine }));
 vi.mock("./pending-store", () => h.ps);
 vi.mock("./db", () => ({ getDb: () => ({}) }));
 vi.mock("./garmin-upload", () => ({ getGarminClient: async () => ({}) }));
 vi.mock("./hevy-sync", () => ({ fetchAllWorkouts: async () => [] }));
+vi.mock("./sync-settings", () => h.settings);
 
 import { reconcilePending, retryPending } from "./pending-recovery";
 import type { buildSyncDeps } from "./sync-one";
@@ -31,15 +40,21 @@ describe("pending-recovery (route shim)", () => {
     expect(h.ps.getPending).toHaveBeenCalledWith("w1", SQL);
   });
 
-  it("retryPending forwards id + options", async () => {
+  it("retryPending forwards the id, and an explicit option beats the saved one", async () => {
     const r = await retryPending("w1", { descriptionEnabled: false }, SQL);
     expect(r.status).toBe("synced");
     expect(h.engine.retryPending.mock.calls[0][1]).toBe("w1");
-    expect(h.engine.retryPending.mock.calls[0][2]).toEqual({ descriptionEnabled: false });
+    expect(h.engine.retryPending.mock.calls[0][2]).toMatchObject({ descriptionEnabled: false });
   });
 
-  it("retryPending defaults options to {}", async () => {
+  it("hands the retry the saved sync settings, not engine defaults", async () => {
+    // A retry re-runs the ordinary sync now, so without these it would run with
+    // merge off and no user profile, and come back missing the very things
+    // #614 was about.
     await retryPending("w2", undefined, SQL);
-    expect(h.engine.retryPending.mock.calls[0][2]).toEqual({});
+    const opts = h.engine.retryPending.mock.calls[0][2] as Record<string, unknown>;
+    expect(Object.keys(opts).sort()).toEqual(
+      ["descriptionEnabled", "hrFusion", "merge", "profile"].sort(),
+    );
   });
 });

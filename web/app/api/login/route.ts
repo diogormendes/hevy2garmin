@@ -13,6 +13,19 @@ function clientIp(req: Request): string {
   return req.headers.get("x-real-ip")?.trim() || "unknown";
 }
 
+/**
+ * Was this request made over HTTPS? Behind a proxy (Vercel, Caddy, Traefik) the
+ * original scheme is in x-forwarded-proto; otherwise the request URL says it.
+ * A Secure cookie sent over plain http to anything but localhost is dropped by
+ * the browser, so a self-hosted container opened at http://<lan-ip> could never
+ * sign in (#675). The flag follows the real scheme instead of NODE_ENV.
+ */
+function isHttps(req: Request): boolean {
+  const fwd = req.headers.get("x-forwarded-proto");
+  if (fwd) return fwd.split(",")[0].trim().toLowerCase() === "https";
+  return new URL(req.url).protocol === "https:";
+}
+
 /** Only allow same-origin relative redirects (block open-redirects). */
 function safeNext(raw: string | null): string {
   if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
@@ -75,7 +88,7 @@ export async function POST(req: Request) {
   res.cookies.set(SESSION_COOKIE, await signSession(epoch), {
     httpOnly: true,
     sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
+    secure: isHttps(req),
     maxAge: 30 * 24 * 60 * 60,
     path: "/",
   });

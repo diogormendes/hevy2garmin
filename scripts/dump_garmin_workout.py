@@ -84,7 +84,7 @@ def cmd_list(client) -> None:
     print("-" * 40)
     for w in workouts:
         sport = (w.get("sportType") or {}).get("sportTypeKey", "?")
-        print(f"{str(w.get('workoutId', '?')):>14}  {w.get('workoutName', '?')}  [{sport}]")
+        print(f"{w.get('workoutId', '?')!s:>14}  {w.get('workoutName', '?')}  [{sport}]")
 
 
 def cmd_dump(client, workout_id: str, out_path: str | None) -> None:

@@ -4,6 +4,7 @@ Python 3.10's datetime.fromisoformat only accepts 0/3/6 fractional-second digits
 and a 'T' separator; Garmin/Surfr timestamps can have a single fractional digit or
 a space separator. parse_iso normalizes both.
 """
+
 from datetime import datetime, timezone
 
 from hevy2garmin._isotime import parse_iso
@@ -24,7 +25,9 @@ def test_various_fractional_widths():
 
 
 def test_no_fraction():
-    assert parse_iso("2026-03-15T18:02:00+00:00") == datetime(2026, 3, 15, 18, 2, tzinfo=timezone.utc)
+    assert parse_iso("2026-03-15T18:02:00+00:00") == datetime(
+        2026, 3, 15, 18, 2, tzinfo=timezone.utc
+    )
 
 
 def test_space_separator_and_z():

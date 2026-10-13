@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { getDb } from "@/lib/db";
 import { authEnabled, verifySession, SESSION_COOKIE } from "@/lib/auth";
 import { getGithubPat, getGithubRepo, setupGithubActions } from "@/lib/github";
+import { resolveDatabaseUrl } from "@/lib/database-url";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
   try { sql = getDb(); } catch { sql = null; }
   const pat = await getGithubPat(sql);
   const repo = getGithubRepo();
-  const databaseUrl = process.env.DATABASE_URL?.trim();
+  const databaseUrl = resolveDatabaseUrl();
   if (!pat) return NextResponse.json({ ok: false, message: "GitHub token not set" }, { status: 400 });
   if (!repo) return NextResponse.json({ ok: false, message: "Not deployed via Vercel (missing repo info)" }, { status: 400 });
   if (!databaseUrl) return NextResponse.json({ ok: false, message: "DATABASE_URL not set" }, { status: 400 });

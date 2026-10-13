@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { DBTokenStore } from "garmin-auth";
 import { GARMIN_TOKEN_PLATFORM, resetGarminClient } from "@/lib/garmin-upload";
 import { tokensFromResult, type WorkerLoginResult } from "@/lib/garmin-login-worker";
+import { clearCooldown } from "@/lib/garmin-cooldown";
+import { getDb } from "@/lib/db";
 
 /** Persist the DI tokens (nested {garmin_tokens:{...}}) for the sync engine. */
 async function persist(url: string, result: WorkerLoginResult): Promise<void> {
@@ -26,6 +28,10 @@ export function toResponse(
         );
       }
       return persist(url, result)
+        // A sign-in that worked resets the backoff. Without this `hits` only
+        // ever grows, so the next rate limit would start at the 24 hour cap
+        // however long ago the last one was (#609).
+        .then(() => clearCooldown(getDb()).catch(() => {}))
         .then(() => NextResponse.json({ status: "connected" }))
         .catch((err) =>
           NextResponse.json(

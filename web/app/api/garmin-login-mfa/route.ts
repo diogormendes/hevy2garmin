@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { workerLoginMfa } from "@/lib/garmin-login-worker";
 import { toResponse } from "@/lib/garmin-login-response";
+import { resolveDatabaseUrl } from "@/lib/database-url";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,5 +34,5 @@ export async function POST(request: Request) {
   }
 
   const result = await workerLoginMfa(sessionId, code);
-  return toResponse(process.env.DATABASE_URL, result);
+  return toResponse(resolveDatabaseUrl() ?? undefined, result);
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useState } from "react";
+import { withBasePath } from "@/lib/base-path";
 
 interface CategoryOption {
   id: number;
@@ -27,24 +28,40 @@ export function MappingForm({ categories }: { categories: CategoryOption[] }) {
 }
 
 function MappingFormInner({ categories }: { categories: CategoryOption[] }) {
-  const router = useRouter();
   const params = useSearchParams();
-  const [hevyName, setHevyName] = useState("");
-  const [category, setCategory] = useState(categories[0]?.id ?? 0);
-  const [subcategory, setSubcategory] = useState("0");
+  const editName = params.get("edit");
+  // Prefill from the table's Edit/Override link as INITIAL state, remounting the fields when
+  // the link changes (the key), instead of copying the params into state inside an effect.
+  const cat = Number.parseInt(params.get("cat") ?? "", 10);
+  const sub = params.get("sub");
+  return (
+    <MappingFields
+      key={editName ?? ""}
+      categories={categories}
+      editName={editName}
+      initialCategory={editName && Number.isFinite(cat) ? cat : (categories[0]?.id ?? 0)}
+      initialSubcategory={editName && sub != null ? sub : "0"}
+    />
+  );
+}
+
+function MappingFields({
+  categories,
+  editName,
+  initialCategory,
+  initialSubcategory,
+}: {
+  categories: CategoryOption[];
+  editName: string | null;
+  initialCategory: number;
+  initialSubcategory: string;
+}) {
+  const router = useRouter();
+  const [hevyName, setHevyName] = useState(editName ?? "");
+  const [category, setCategory] = useState(initialCategory);
+  const [subcategory, setSubcategory] = useState(initialSubcategory);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const editName = params.get("edit");
-
-  // Prefill from the table's Edit/Override link.
-  useEffect(() => {
-    if (!editName) return;
-    setHevyName(editName);
-    const cat = Number.parseInt(params.get("cat") ?? "", 10);
-    if (Number.isFinite(cat)) setCategory(cat);
-    const sub = params.get("sub");
-    if (sub != null) setSubcategory(sub);
-  }, [editName, params]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -56,7 +73,7 @@ function MappingFormInner({ categories }: { categories: CategoryOption[] }) {
     }
     setBusy(true);
     try {
-      const res = await fetch("/api/mapping", {
+      const res = await fetch(withBasePath("/api/mapping"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -171,7 +188,7 @@ export function DeleteMappingButton({ hevyName }: { hevyName: string }) {
     if (!confirm(`Delete custom mapping for "${hevyName}"?`)) return;
     setBusy(true);
     try {
-      await fetch("/api/mapping/delete", {
+      await fetch(withBasePath("/api/mapping/delete"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ hevy_name: hevyName }),

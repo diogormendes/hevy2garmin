@@ -73,6 +73,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolution_reason TEXT`,
   `ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`,
   `ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resolution_source TEXT`,
+  `ALTER TABLE synced_workouts ADD COLUMN IF NOT EXISTS resynced_at TIMESTAMPTZ`,
   `CREATE TABLE IF NOT EXISTS app_cache (
      key TEXT PRIMARY KEY,
      value JSONB NOT NULL,

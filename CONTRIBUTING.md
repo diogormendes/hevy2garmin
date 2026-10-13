@@ -31,7 +31,7 @@ Dev server runs on `http://localhost:8123`.
 2. **Branch from `main`** with a name that references the issue: `fix/12-name` or `feat/42-thing`.
 3. **Commit.** Small, focused commits. Conventional prefixes (`feat:`, `fix:`, `perf:`, `docs:`, `cleanup:`) are appreciated.
 4. **Open a PR** with `Closes #N` in the body so merging auto-closes the issue.
-5. **Wait for CI** (`.github/workflows/ci.yml` — runs pytest + ruff on Python 3.10/3.11/3.12).
+5. **Wait for CI** (`.github/workflows/ci.yml`: pytest on Python 3.10 and 3.12 against SQLite, pytest against Postgres, `ruff check` and `ruff format --check` at the pinned ruff version, plus the TypeScript, web and Expo jobs).
 6. **Merge.** `main` is protected; PRs are required.
 
 ## Releasing to PyPI

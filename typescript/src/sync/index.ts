@@ -5,3 +5,7 @@ export * from "./dedup";
 export * from "./description";
 export * from "./sync-one";
 export * from "./recovery";
+export * from "./merge";
+export * from "./run-log";
+export * from "./grace";
+export * from "./lock";

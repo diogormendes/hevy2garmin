@@ -17,6 +17,7 @@
  */
 import { getDb } from "./db";
 import { GarminAuth, DBTokenStore, type GarminClient } from "garmin-auth";
+import { resolveDatabaseUrl } from "./database-url";
 
 /** The DI tokens live in platform_credentials at this platform key. */
 export const GARMIN_TOKEN_PLATFORM = "garmin_tokens";
@@ -54,7 +55,7 @@ export async function normalizeGarminTokenRow(sql: ReturnType<typeof getDb>): Pr
  */
 export async function getGarminClient(databaseUrl?: string): Promise<GarminClient> {
   if (cachedClient) return cachedClient;
-  const url = databaseUrl ?? process.env.DATABASE_URL;
+  const url = databaseUrl ?? resolveDatabaseUrl();
   if (!url) throw new Error("DATABASE_URL not set (cannot load Garmin tokens)");
   try { await normalizeGarminTokenRow(getDb()); } catch { /* no DB handle: DBTokenStore reports it */ }
   const store = new DBTokenStore(url, GARMIN_TOKEN_PLATFORM);

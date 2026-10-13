@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { GarminClient } from "garmin-auth";
 
 /**
- * The engine (dedup layers, dry-run default, claim→upload→finalize) is tested
- * in the hevy2garmin package. These tests cover THIS app's wiring of it: the
- * store is bound to the route's `sql`, the Garmin client is built lazily and
- * once, the Hevy fetch is the app's, and options reach the engine untouched.
+ * The engine (dedup layers, dry-run default, merge, HR fusion,
+ * claim→upload→finalize) is tested in the hevy2garmin package. These tests
+ * cover THIS app's wiring of it: the store is bound to the route's `sql`, the
+ * Garmin client is built lazily and once, the Hevy fetch is the app's, and the
+ * settings the user saved actually reach the engine.
  */
 const h = vi.hoisted(() => ({
   engine: {
@@ -23,10 +24,28 @@ vi.mock("./db", () => ({ getDb: () => ({}) }));
 vi.mock("./garmin-upload", () => ({ getGarminClient: () => h.getGarminClient() }));
 vi.mock("./hevy-sync", () => ({ fetchAllWorkouts: () => h.fetchAllWorkouts() }));
 
-import { syncOneWorkout, listCandidates, type buildSyncDeps } from "./sync-one";
+import { syncOneWorkout, listCandidates, buildSyncDeps } from "./sync-one";
 
 type Deps = ReturnType<typeof buildSyncDeps>;
-const SQL = { tag: "sql" } as never;
+
+/**
+ * A tagged-template `sql` that answers the settings reads.
+ *
+ * The shim loads the user's settings before every sync now, so a plain object
+ * is no longer a usable stand-in for the connection.
+ */
+function makeSql(rows: Record<string, unknown> = {}) {
+  const fn = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+    const text = strings.join("?");
+    const key = String(values[0] ?? "");
+    let result: unknown[] = [];
+    if (text.includes("app_cache") && key in rows) result = [{ value: rows[key] }];
+    const p = Promise.resolve(result);
+    return Object.assign(p, { catch: p.catch.bind(p) });
+  }) as never as ReturnType<typeof import("./db").getDb>;
+  return fn;
+}
+const SQL = makeSql() as never;
 const lastDeps = () => h.engine.syncOneWorkout.mock.calls.at(-1)![0] as Deps;
 
 beforeEach(() => {
@@ -39,12 +58,45 @@ beforeEach(() => {
 });
 
 describe("syncOneWorkout (route shim)", () => {
-  it("forwards options to the engine untouched — no dryRun is injected", async () => {
+  it("never injects a dryRun, and passes the caller's options through", async () => {
     await syncOneWorkout(SQL);
     expect(h.engine.syncOneWorkout).toHaveBeenCalledTimes(1);
-    expect(h.engine.syncOneWorkout.mock.calls[0][1]).toEqual({});
-    await syncOneWorkout(SQL, { dryRun: false, targetHevyId: "hevy-1", descriptionEnabled: false });
-    expect(h.engine.syncOneWorkout.mock.calls[1][1]).toEqual({ dryRun: false, targetHevyId: "hevy-1", descriptionEnabled: false });
+    expect(h.engine.syncOneWorkout.mock.calls[0][1]).not.toHaveProperty("dryRun");
+    await syncOneWorkout(SQL, { dryRun: false, targetHevyId: "hevy-1" });
+    expect(h.engine.syncOneWorkout.mock.calls[1][1]).toMatchObject({
+      dryRun: false,
+      targetHevyId: "hevy-1",
+    });
+  });
+
+  it("carries the saved merge and HR settings to the engine, which is the whole point", async () => {
+    const sql = makeSql({
+      merge_settings: {
+        merge_mode: true,
+        merge_watch_strategy: "replace",
+        merge_activity_types: ["strength_training", "indoor_cardio"],
+        merge_overlap_pct: 85,
+        merge_max_drift_min: 12,
+      },
+      hr_fusion: { enabled: false },
+    }) as never;
+    await syncOneWorkout(sql, { dryRun: false });
+    expect(h.engine.syncOneWorkout.mock.calls[0][1]).toMatchObject({
+      hrFusion: false,
+      merge: {
+        enabled: true,
+        watchStrategy: "replace",
+        activityTypes: ["strength_training", "indoor_cardio"],
+        overlapThreshold: 0.85,
+        maxDriftMinutes: 12,
+      },
+    });
+  });
+
+  it("an explicit option still beats the saved setting", async () => {
+    const sql = makeSql({ hr_fusion: { enabled: true } }) as never;
+    await syncOneWorkout(sql, { dryRun: true, hrFusion: false });
+    expect(h.engine.syncOneWorkout.mock.calls[0][1]).toMatchObject({ hrFusion: false });
   });
 
   it("binds the store to the route's sql", async () => {
@@ -80,7 +132,9 @@ describe("syncOneWorkout (route shim)", () => {
     expect(h.fetchAllWorkouts).not.toHaveBeenCalled();
     expect(garminClientFactory).toHaveBeenCalledTimes(1);
     expect(h.getGarminClient).not.toHaveBeenCalled();
-    expect(h.engine.syncOneWorkout.mock.calls[0][1]).toEqual({ dryRun: true });
+    expect(h.engine.syncOneWorkout.mock.calls[0][1]).toMatchObject({ dryRun: true });
+    expect(h.engine.syncOneWorkout.mock.calls[0][1]).not.toHaveProperty("fetchWorkouts");
+    expect(h.engine.syncOneWorkout.mock.calls[0][1]).not.toHaveProperty("garminClientFactory");
   });
 });
 
@@ -91,5 +145,45 @@ describe("listCandidates (route shim)", () => {
     const deps = h.engine.listCandidates.mock.calls[0][0] as Deps;
     await deps.store.isSynced("w9");
     expect(h.ps.isSynced).toHaveBeenCalledWith("w9", SQL);
+  });
+});
+
+/**
+ * The start date is applied in THIS app's fetch, before the engine sees the
+ * list (#647), so every path that reads candidates honours it without being
+ * told and the engine needs no release.
+ *
+ * Requested by a user whose whole Hevy back catalogue showed as pending,
+ * because he had entered those sessions into Garmin by hand before finding the
+ * tool.
+ */
+describe("sync start date", () => {
+  const OLD = { id: "old", title: "Before he installed it", start_time: "2025-06-01T10:00:00Z" };
+  const NEW = { id: "new", title: "After", start_time: "2026-09-15T18:00:00Z" };
+
+  async function fetchWith(startDate: string | null) {
+    const sql = makeSql(startDate ? { sync_window: { start_date: startDate } } : {}) as never;
+    const deps = buildSyncDeps(sql, { fetchWorkouts: async () => [OLD, NEW] as never });
+    return (await deps.fetchWorkouts()) as Array<{ id: string }>;
+  }
+
+  it("hides workouts from before the date", async () => {
+    expect((await fetchWith("2026-09-01")).map((w) => w.id)).toEqual(["new"]);
+  });
+
+  it("keeps everything when no date is set", async () => {
+    expect((await fetchWith(null)).map((w) => w.id)).toEqual(["old", "new"]);
+  });
+
+  it("does not limit a resync, whose workout is synced and may be older than the date", async () => {
+    const sql = makeSql({ sync_window: { start_date: "2026-09-01" } }) as never;
+    const deps = buildSyncDeps(sql, { fetchWorkouts: async () => [OLD] as never, targetActivityId: 4242 });
+    expect(((await deps.fetchWorkouts()) as Array<{ id: string }>).map((w) => w.id)).toEqual(["old"]);
+  });
+
+  it("keeps everything when the stored value is not a date", async () => {
+    // A bad value must never mean "hide everything": the user would see an
+    // empty list with nothing to explain it.
+    expect((await fetchWith("last tuesday")).map((w) => w.id)).toEqual(["old", "new"]);
   });
 });

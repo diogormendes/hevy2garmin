@@ -2,25 +2,24 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from hevy2garmin.merge import (
     MergeResult,
+    _category_to_string,
+    _exercise_to_string,
+    _is_subcategory_rejection,
+    _strip_exercise_names,
     attempt_merge,
     build_exercise_sets_payload,
     reset_circuit_breaker,
-    _category_to_string,
-    _exercise_to_string,
-    _strip_exercise_names,
-    _is_subcategory_rejection,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_garmin_activity(
     activity_id: int = 12345,
@@ -66,8 +65,8 @@ HEVY_WORKOUT = {
 # Matching heuristic tests
 # ---------------------------------------------------------------------------
 
-class TestFindMatchingActivity:
 
+class TestFindMatchingActivity:
     def test_exact_overlap_matches(self):
         """Strength training with high overlap → match."""
         from hevy2garmin.garmin import find_matching_garmin_activity
@@ -123,7 +122,9 @@ class TestFindMatchingActivity:
             _make_garmin_activity(type_key="bouldering"),
         ]
         match = find_matching_garmin_activity(
-            client, HEVY_WORKOUT, activity_types={"strength_training", "bouldering"},
+            client,
+            HEVY_WORKOUT,
+            activity_types={"strength_training", "bouldering"},
         )
         assert match is not None
         assert match["activityId"] == 12345
@@ -131,6 +132,7 @@ class TestFindMatchingActivity:
     def test_incomplete_activity_rejected(self):
         """Activity still in progress (end time in future) → no match."""
         from datetime import datetime, timezone
+
         from hevy2garmin.garmin import find_matching_garmin_activity
 
         now = datetime.now(timezone.utc)
@@ -166,8 +168,8 @@ class TestFindMatchingActivity:
 # Payload builder tests
 # ---------------------------------------------------------------------------
 
-class TestBuildPayload:
 
+class TestBuildPayload:
     def test_payload_structure(self):
         """Payload has activityId and exerciseSets list."""
         payload = build_exercise_sets_payload(
@@ -277,12 +279,16 @@ class TestBuildPayload:
             "start_time": "2026-03-15T18:00:00+00:00",
             "end_time": "2026-03-15T18:10:00+00:00",
             "exercises": [
-                {"title": "Totally Invented Movement 9000",
-                 "sets": [{"type": "normal", "weight_kg": 10, "reps": 5}]},
+                {
+                    "title": "Totally Invented Movement 9000",
+                    "sets": [{"type": "normal", "weight_kg": 10, "reps": 5}],
+                },
             ],
         }
         payload = build_exercise_sets_payload(
-            workout, activity_id=1, activity_start_time="2026-03-15 18:00:00",
+            workout,
+            activity_id=1,
+            activity_start_time="2026-03-15 18:00:00",
             activity_duration_s=10 * 60,
         )
         active = next(s for s in payload["exerciseSets"] if s["setType"] == "ACTIVE")
@@ -298,12 +304,16 @@ class TestBuildPayload:
             "start_time": "2026-03-15T18:00:00+00:00",
             "end_time": "2026-03-15T18:10:00+00:00",
             "exercises": [
-                {"title": "Bent Over Row (Barbell)",
-                 "sets": [{"type": "normal", "weight_kg": 60, "reps": 8}]},
+                {
+                    "title": "Bent Over Row (Barbell)",
+                    "sets": [{"type": "normal", "weight_kg": 60, "reps": 8}],
+                },
             ],
         }
         payload = build_exercise_sets_payload(
-            workout, activity_id=1, activity_start_time="2026-03-15 18:00:00",
+            workout,
+            activity_id=1,
+            activity_start_time="2026-03-15 18:00:00",
             activity_duration_s=10 * 60,
         )
         active = next(s for s in payload["exerciseSets"] if s["setType"] == "ACTIVE")
@@ -326,8 +336,8 @@ class TestBuildPayload:
 # Category string conversion tests
 # ---------------------------------------------------------------------------
 
-class TestCategoryConversion:
 
+class TestCategoryConversion:
     def test_known_category(self):
         assert _category_to_string(0) == "BENCH_PRESS"
         assert _category_to_string(28) == "SQUAT"
@@ -353,16 +363,20 @@ class TestCategoryConversion:
 # Integration: attempt_merge
 # ---------------------------------------------------------------------------
 
-_APPLIED = {"exerciseSets": [
-    {"setType": "ACTIVE", "exercises": [{"category": "BENCH_PRESS", "name": "BARBELL_BENCH_PRESS"}]}
-]}
-_DROPPED = {"exerciseSets": [
-    {"setType": "ACTIVE", "exercises": [{"category": None, "name": None}]}
-]}
+_APPLIED = {
+    "exerciseSets": [
+        {
+            "setType": "ACTIVE",
+            "exercises": [{"category": "BENCH_PRESS", "name": "BARBELL_BENCH_PRESS"}],
+        }
+    ]
+}
+_DROPPED = {
+    "exerciseSets": [{"setType": "ACTIVE", "exercises": [{"category": None, "name": None}]}]
+}
 
 
 class TestAttemptMerge:
-
     def setup_method(self):
         reset_circuit_breaker()
 
@@ -372,7 +386,9 @@ class TestAttemptMerge:
     @patch("hevy2garmin.merge.push_exercise_sets")
     @patch("hevy2garmin.merge.rename_activity")
     @patch("hevy2garmin.merge.set_description")
-    def test_merge_path_taken(self, mock_desc, mock_rename, mock_push, mock_get_sets, mock_find, _sleep):
+    def test_merge_path_taken(
+        self, mock_desc, mock_rename, mock_push, mock_get_sets, mock_find, _sleep
+    ):
         """When a match is found, PUT is called and (if names stick) merged=True."""
         mock_find.return_value = _make_garmin_activity()
         # first read = backup, second read = verify (names applied)
@@ -392,7 +408,9 @@ class TestAttemptMerge:
     @patch("hevy2garmin.merge.get_activity_exercise_sets")
     @patch("hevy2garmin.merge.push_exercise_sets")
     @patch("hevy2garmin.merge.rename_activity")
-    def test_names_dropped_forces_fresh_upload(self, mock_rename, mock_push, mock_get_sets, mock_find, _sleep):
+    def test_names_dropped_forces_fresh_upload(
+        self, mock_rename, mock_push, mock_get_sets, mock_find, _sleep
+    ):
         """Watch activity drops the names -> merged=False, force_fresh_upload=True (#159)."""
         mock_find.return_value = _make_garmin_activity()
         # backup read, then verify read shows the names were dropped
@@ -462,7 +480,9 @@ def test_watch_replace_strategy_forces_upload_and_marks_for_delete(mock_push, mo
 @patch("hevy2garmin.merge.rename_activity")
 @patch("hevy2garmin.merge.set_description")
 @patch("hevy2garmin.merge.generate_description")
-def test_watch_describe_strategy_enriches_in_place(mock_gen, mock_desc, mock_rename, mock_push, mock_find):
+def test_watch_describe_strategy_enriches_in_place(
+    mock_gen, mock_desc, mock_rename, mock_push, mock_find
+):
     """'describe' strategy keeps the single watch activity, enriching its name and
     description, with no push and no fresh upload."""
     reset_circuit_breaker()
@@ -476,8 +496,8 @@ def test_watch_describe_strategy_enriches_in_place(mock_gen, mock_desc, mock_ren
     assert result.merged is True
     assert result.activity_id == 12345
     assert result.force_fresh_upload is False
-    mock_push.assert_not_called()      # never pushes sets to a watch activity
-    mock_rename.assert_called_once()   # but does rename + describe it
+    mock_push.assert_not_called()  # never pushes sets to a watch activity
+    mock_rename.assert_called_once()  # but does rename + describe it
     mock_desc.assert_called_once()
 
 
@@ -487,7 +507,9 @@ def test_watch_describe_strategy_enriches_in_place(mock_gen, mock_desc, mock_ren
 @patch("hevy2garmin.merge.push_exercise_sets")
 @patch("hevy2garmin.merge.rename_activity")
 @patch("hevy2garmin.merge.set_description")
-def test_development_upload_still_merges(mock_desc, mock_rename, mock_push, mock_get, mock_find, _sleep):
+def test_development_upload_still_merges(
+    mock_desc, mock_rename, mock_push, mock_get, mock_find, _sleep
+):
     """A hevy2garmin upload (manufacturer DEVELOPMENT) is still merged normally."""
     reset_circuit_breaker()
     act = _make_garmin_activity()
@@ -508,7 +530,9 @@ def test_development_upload_still_merges(mock_desc, mock_rename, mock_push, mock
 @patch("hevy2garmin.merge.rename_activity")
 @patch("hevy2garmin.merge.set_description")
 @patch("hevy2garmin.merge.generate_description")
-def test_watch_merge_strategy_pushes_and_keeps(mock_gen, mock_desc, mock_rename, mock_push, mock_get, mock_find, _sleep):
+def test_watch_merge_strategy_pushes_and_keeps(
+    mock_gen, mock_desc, mock_rename, mock_push, mock_get, mock_find, _sleep
+):
     """'merge' strategy pushes sets into the watch activity and keeps it as one
     activity (merged=True), without verifying names or forcing a fresh upload (#159)."""
     reset_circuit_breaker()
@@ -524,19 +548,22 @@ def test_watch_merge_strategy_pushes_and_keeps(mock_gen, mock_desc, mock_rename,
     assert result.activity_id == 12345
     assert result.force_fresh_upload is False
     assert result.delete_after_upload is None
-    mock_push.assert_called_once()     # pushed the sets into the watch activity
-    mock_rename.assert_called_once()   # renamed + described it in place
+    mock_push.assert_called_once()  # pushed the sets into the watch activity
+    mock_rename.assert_called_once()  # renamed + described it in place
 
 
 # ---------------------------------------------------------------------------
 # Resilience: one rejected subcategory must not drop the whole merge
 # ---------------------------------------------------------------------------
 
+
 def test_strip_exercise_names_nulls_names_keeps_category():
     """_strip_exercise_names returns a copy with every name nulled, categories kept."""
     payload = build_exercise_sets_payload(
-        HEVY_WORKOUT, activity_id=1,
-        activity_start_time="2026-03-15 18:00:00", activity_duration_s=45 * 60,
+        HEVY_WORKOUT,
+        activity_id=1,
+        activity_start_time="2026-03-15 18:00:00",
+        activity_duration_s=45 * 60,
     )
     stripped = _strip_exercise_names(payload)
     # the original still has real names (copy, not mutated)
@@ -548,7 +575,9 @@ def test_strip_exercise_names_nulls_names_keeps_category():
 
 
 def test_is_subcategory_rejection_detects_garmin_400():
-    assert _is_subcategory_rejection(RuntimeError("API Error 400 - Invalid Sub-Category Passed in the request"))
+    assert _is_subcategory_rejection(
+        RuntimeError("API Error 400 - Invalid Sub-Category Passed in the request")
+    )
     assert _is_subcategory_rejection(Exception("invalid subcategory"))
     assert not _is_subcategory_rejection(RuntimeError("connection reset"))
     assert not _is_subcategory_rejection(RuntimeError("PUT failed"))
@@ -561,12 +590,14 @@ def test_is_subcategory_rejection_detects_garmin_400():
 @patch("hevy2garmin.merge.rename_activity")
 @patch("hevy2garmin.merge.set_description")
 @patch("hevy2garmin.merge.generate_description")
-def test_subcategory_400_retries_without_names(mock_gen, mock_desc, mock_rename, mock_push, mock_get, mock_find, _sleep):
+def test_subcategory_400_retries_without_names(
+    mock_gen, mock_desc, mock_rename, mock_push, mock_get, mock_find, _sleep
+):
     """A subcategory 400 on the atomic PUT retries once with names stripped so the
     sets still land (merged=True), instead of dropping the entire merge."""
     reset_circuit_breaker()
     act = _make_garmin_activity()
-    act["manufacturer"] = "GARMIN"          # watch activity, merge strategy skips the name-verify
+    act["manufacturer"] = "GARMIN"  # watch activity, merge strategy skips the name-verify
     mock_find.return_value = act
     mock_get.return_value = {"exerciseSets": []}
     mock_gen.return_value = "Bench: 3 sets"
@@ -578,7 +609,6 @@ def test_subcategory_400_retries_without_names(mock_gen, mock_desc, mock_rename,
         calls.append(payload)
         if len(calls) == 1:
             raise RuntimeError("API Error 400 - Invalid Sub-Category Passed in the request")
-        return None
 
     mock_push.side_effect = push_side_effect
 
@@ -610,7 +640,7 @@ def test_non_subcategory_error_is_not_retried(mock_push, mock_get, mock_find, _s
 
     assert result.merged is False
     assert "PUT failed" in result.fallback_reason
-    mock_push.assert_called_once()   # no retry
+    mock_push.assert_called_once()  # no retry
 
 
 class TestNamesApplied:
@@ -620,6 +650,7 @@ class TestNamesApplied:
     @patch("hevy2garmin.merge.get_activity_exercise_sets")
     def test_names_present(self, mock_get, _sleep):
         from hevy2garmin.merge import _names_applied
+
         mock_get.return_value = _APPLIED
         assert _names_applied(MagicMock(), 1) is True
 
@@ -627,6 +658,7 @@ class TestNamesApplied:
     @patch("hevy2garmin.merge.get_activity_exercise_sets")
     def test_names_dropped(self, mock_get, _sleep):
         from hevy2garmin.merge import _names_applied
+
         mock_get.return_value = _DROPPED
         assert _names_applied(MagicMock(), 1) is False
 
@@ -634,6 +666,7 @@ class TestNamesApplied:
     @patch("hevy2garmin.merge.get_activity_exercise_sets")
     def test_no_exercises_at_all(self, mock_get, _sleep):
         from hevy2garmin.merge import _names_applied
+
         mock_get.return_value = {"exerciseSets": []}
         assert _names_applied(MagicMock(), 1) is False
 
@@ -641,6 +674,7 @@ class TestNamesApplied:
     @patch("hevy2garmin.merge.get_activity_exercise_sets")
     def test_read_error_assumes_applied(self, mock_get, _sleep):
         from hevy2garmin.merge import _names_applied
+
         mock_get.side_effect = RuntimeError("boom")
         assert _names_applied(MagicMock(), 1) is True
 
@@ -649,21 +683,36 @@ class TestNamesApplied:
 # Sync integration tests
 # ---------------------------------------------------------------------------
 
+
 class TestSyncIntegration:
     """Test merge mode wired into sync.py."""
 
-    WORKOUTS = [
+    WORKOUTS: ClassVar = [
         {
-            "id": "w1", "title": "Push",
-            "start_time": "2026-03-15T18:00:00+00:00", "end_time": "2026-03-15T18:45:00+00:00",
+            "id": "w1",
+            "title": "Push",
+            "start_time": "2026-03-15T18:00:00+00:00",
+            "end_time": "2026-03-15T18:45:00+00:00",
             "updated_at": "2026-03-15T18:45:00+00:00",
-            "exercises": [{"title": "Bench Press (Barbell)", "sets": [{"type": "normal", "weight_kg": 60, "reps": 8}]}],
+            "exercises": [
+                {
+                    "title": "Bench Press (Barbell)",
+                    "sets": [{"type": "normal", "weight_kg": 60, "reps": 8}],
+                }
+            ],
         },
         {
-            "id": "w2", "title": "Pull",
-            "start_time": "2026-03-16T18:00:00+00:00", "end_time": "2026-03-16T18:45:00+00:00",
+            "id": "w2",
+            "title": "Pull",
+            "start_time": "2026-03-16T18:00:00+00:00",
+            "end_time": "2026-03-16T18:45:00+00:00",
             "updated_at": "2026-03-16T18:45:00+00:00",
-            "exercises": [{"title": "Bent Over Row (Barbell)", "sets": [{"type": "normal", "weight_kg": 50, "reps": 10}]}],
+            "exercises": [
+                {
+                    "title": "Bent Over Row (Barbell)",
+                    "sets": [{"type": "normal", "weight_kg": 50, "reps": 10}],
+                }
+            ],
         },
     ]
 
@@ -685,6 +734,7 @@ class TestSyncIntegration:
         mock_merge.return_value = MergeResult(merged=True, activity_id=12345)
 
         from hevy2garmin.sync import sync
+
         stats = sync(config={"hevy_api_key": "t", "merge_mode": True}, limit=2)
 
         assert stats["merged"] == 2
@@ -697,7 +747,10 @@ class TestSyncIntegration:
     @patch("hevy2garmin.sync.get_client")
     @patch("hevy2garmin.sync.HevyClient")
     @patch("hevy2garmin.sync.attempt_merge")
-    @patch("hevy2garmin.sync.generate_fit", return_value={"exercises": 1, "total_sets": 1, "calories": 100, "avg_hr": 90})
+    @patch(
+        "hevy2garmin.sync.generate_fit",
+        return_value={"exercises": 1, "total_sets": 1, "calories": 100, "avg_hr": 90},
+    )
     @patch("hevy2garmin.sync.upload_fit", return_value={"activity_id": 222})
     @patch("hevy2garmin.sync.find_activity_by_start_time", return_value=None)
     @patch("hevy2garmin.sync.rename_activity")
@@ -705,19 +758,36 @@ class TestSyncIntegration:
     @patch("hevy2garmin.sync.generate_description", return_value="test")
     def test_merge_on_second_falls_back(self, *mocks):
         """merge ON, first matches, second doesn't → fallback to upload."""
-        (mock_desc, mock_setdesc, mock_rename, mock_find, mock_upload,
-         mock_fit, mock_merge, mock_hevy_cls, mock_gclient, mock_db) = mocks
+        (
+            _mock_desc,
+            _mock_setdesc,
+            _mock_rename,
+            _mock_find,
+            _mock_upload,
+            _mock_fit,
+            mock_merge,
+            mock_hevy_cls,
+            mock_gclient,
+            mock_db,
+        ) = mocks
 
         mock_hevy_cls.return_value = self._mock_hevy()
         mock_gclient.return_value = MagicMock()
         mock_db.is_synced.return_value = False
         call_count = [0]
+
         def alt(c, w, d, **kwargs):
             call_count[0] += 1
-            return MergeResult(merged=True, activity_id=111) if call_count[0] == 1 else MergeResult(merged=False, fallback_reason="No match")
+            return (
+                MergeResult(merged=True, activity_id=111)
+                if call_count[0] == 1
+                else MergeResult(merged=False, fallback_reason="No match")
+            )
+
         mock_merge.side_effect = alt
 
         from hevy2garmin.sync import sync
+
         stats = sync(config={"hevy_api_key": "t", "merge_mode": True}, limit=2)
 
         assert stats["merged"] == 1
@@ -730,7 +800,10 @@ class TestSyncIntegration:
     @patch("hevy2garmin.sync.get_client")
     @patch("hevy2garmin.sync.HevyClient")
     @patch("hevy2garmin.sync.attempt_merge")
-    @patch("hevy2garmin.sync.generate_fit", return_value={"exercises": 1, "total_sets": 1, "calories": 100, "avg_hr": 90})
+    @patch(
+        "hevy2garmin.sync.generate_fit",
+        return_value={"exercises": 1, "total_sets": 1, "calories": 100, "avg_hr": 90},
+    )
     @patch("hevy2garmin.sync.upload_fit", return_value={"activity_id": 333})
     @patch("hevy2garmin.sync.find_activity_by_start_time", return_value=None)
     @patch("hevy2garmin.sync.rename_activity")
@@ -738,14 +811,25 @@ class TestSyncIntegration:
     @patch("hevy2garmin.sync.generate_description", return_value="test")
     def test_merge_off_normal_upload(self, *mocks):
         """merge OFF → normal upload, merge never attempted."""
-        (mock_desc, mock_setdesc, mock_rename, mock_find, mock_upload,
-         mock_fit, mock_merge, mock_hevy_cls, mock_gclient, mock_db) = mocks
+        (
+            _mock_desc,
+            _mock_setdesc,
+            _mock_rename,
+            _mock_find,
+            _mock_upload,
+            _mock_fit,
+            mock_merge,
+            mock_hevy_cls,
+            mock_gclient,
+            mock_db,
+        ) = mocks
 
         mock_hevy_cls.return_value = self._mock_hevy()
         mock_gclient.return_value = MagicMock()
         mock_db.is_synced.return_value = False
 
         from hevy2garmin.sync import sync
+
         stats = sync(config={"hevy_api_key": "t", "merge_mode": False}, limit=2)
 
         assert stats["merged"] == 0

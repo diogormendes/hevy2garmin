@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * hevy2garmin universal data. The sync state lives in the soma DB
@@ -86,6 +86,8 @@ export interface WorkoutItem {
   hevy_id: string;
   title: string;
   synced_at: string | null;
+  /** When a resync last rewrote the row; synced_at stays the original sync. Absent from older servers. */
+  resynced_at?: string | null;
   calories: number | null;
   avg_hr: number | null;
   garmin_activity_id: string | null;
@@ -109,13 +111,18 @@ export function useWorkouts() {
  * Pull-to-refresh helper: wraps refetch callbacks in a spinner-friendly
  * `refreshing` flag that drops after a short beat so the control settles.
  */
-export function usePullRefresh(...refetchers: Array<() => void>) {
+export function usePullRefresh(...refetchers: (() => void)[]) {
   const [refreshing, setRefreshing] = useState(false);
+  // The rest parameter is a new array every render; the callback reads the latest one through
+  // a ref (written after render) so its own identity stays stable.
+  const latest = useRef(refetchers);
+  useEffect(() => {
+    latest.current = refetchers;
+  });
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    refetchers.forEach((r) => r());
+    latest.current.forEach((r) => r());
     setTimeout(() => setRefreshing(false), 900);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, refetchers);
+  }, []);
   return { refreshing, onRefresh };
 }

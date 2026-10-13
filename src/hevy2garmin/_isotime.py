@@ -6,6 +6,7 @@ fractional digit (e.g. ``2026-03-15T18:02:00.0+00:00``) or a space separator, wh
 parses fine on 3.11+ but raises ``ValueError`` on 3.10. The repo supports 3.10
 (``requires-python >=3.10``), so all timestamp parsing goes through ``parse_iso``.
 """
+
 from __future__ import annotations
 
 import re

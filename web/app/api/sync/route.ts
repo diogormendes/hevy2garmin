@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { syncOneWorkout, type SyncOneResult } from "@/lib/sync-one";
+import { repeatsEarlierRun } from "@/lib/sync-progress";
+import { postgresSyncStore } from "@/lib/sync-store";
+import { recordSyncRun } from "hevy2garmin";
 import { getDb } from "@/lib/db";
+import { acquireSyncLock } from "hevy2garmin";
+import { postgresLockBackend } from "@/lib/sync-lock-store";
+import { detectDuplicates, garminClient } from "@/lib/garmin-activities";
+import { getHevyClient } from "@/lib/hevy-sync";
 import { getGithubPat, getGithubRepo, triggerViaActions } from "@/lib/github";
 import { verifySession, SESSION_COOKIE, authEnabled } from "@/lib/auth";
 
@@ -113,24 +120,104 @@ export async function POST(request: Request) {
     }
   }
 
+  // Take the sync lock for the whole batch. The engine has shipped one since
+  // #570 and nothing called it, so this route, the cron route and the
+  // dashboard's per-workout loop could all run at once, each spending
+  // rate-limited Garmin calls on the same backlog (#604).
+  //
+  // The lock is a courtesy, not a correctness guarantee: `claimPending` is
+  // still what makes a double upload impossible. So a lock we cannot take
+  // reports "already running" rather than failing, and a lock we cannot
+  // release expires on its own.
+  const lock = await acquireSyncLock({
+    backend: postgresLockBackend(sql),
+    key: "sync",
+  });
+  if (!lock) {
+    return NextResponse.json(
+      { error: "A sync is already running. Wait for it to finish, or try again in a few minutes.", runs: [] },
+      { status: 409 },
+    );
+  }
+
   // Live, local/self-hosted: loop the tested single-workout engine.
   const runs: SyncOneResult[] = [];
+  const seen = new Set<string>();
   try {
     for (let i = 0; i < CAP; i++) {
       const r = await syncOneWorkout(sql, { dryRun: false });
       if (r.status === "none") break; // no candidates left
+      // A workout already handled in this run came back: it is still pending (deferred), so
+      // nothing more will move until the next run (#723).
+      if (repeatsEarlierRun(seen, r)) break;
       runs.push(r);
-      if (r.status === "error") break; // stop the batch on a hard error
+      // Only a hard error stops the batch. A refused import (`failed`) or an
+      // unknown outcome (`processing`) is about that one workout, so the run
+      // carries on and counts it, the way the Python loop does at
+      // `sync.py:822-833`. Stopping on those would let one bad FIT cancel the
+      // rest of the backlog.
+      if (r.status === "error") break;
     }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error, runs }, { status: 500 });
+  } finally {
+    await lock.release();
   }
 
-  const totalSynced = runs.filter((r) => r.status === "synced").length;
-  const totalSkipped = runs.filter((r) => r.status === "skipped").length;
-  const totalDeferred = runs.filter((r) => r.status === "deferred").length;
-  const totalError = runs.filter((r) => r.status === "error").length;
+  // Scan for duplicate activities left by past races, the way Python does at
+  // the end of every real run (`sync.py:868-881`). It was only reachable from
+  // a button in Settings, so a user with a duplicate pair had no way to learn
+  // about it unless they went looking (#608). Log-only: nothing is deleted.
+  let duplicates = 0;
+  try {
+    const hevy = await getHevyClient();
+    const raw = (await hevy.getAllWorkouts()) as Array<Record<string, unknown>>;
+    const windows = raw.slice(0, 50).map((w) => ({
+      id: String(w.id),
+      title: (w.title as string | null) ?? null,
+      start_time: (w.start_time as string | null) ?? null,
+      end_time: (w.end_time as string | null) ?? null,
+    }));
+    duplicates = (await detectDuplicates(await garminClient(), windows)).length;
+  } catch {
+    // Best-effort, exactly as in Python: a failed scan must never break a sync
+    // that already succeeded.
+  }
+
+  // Compared as plain strings on purpose. The engine is a separate npm package
+  // on its own release cycle, so this route can be running against a version
+  // that reports statuses these pinned types have never heard of. Counting them
+  // by name means an engine upgrade cannot silently drop a workout out of every
+  // tally, which is what happened when `failed` and `processing` were added.
+  const status = (r: SyncOneResult) => r.status as string;
+
+  const totalSynced = runs.filter((r) => status(r) === "synced").length;
+  const totalSkipped = runs.filter((r) => status(r) === "skipped").length;
+  const totalDeferred = runs.filter((r) => status(r) === "deferred").length;
+  // `failed` counts with `error`: Garmin refused the import and the workout
+  // needs a person either way. `processing` does not, because the upload may
+  // well have landed and calling that a failure would be a guess. It is counted
+  // with the workouts that did not sync this time, alongside deferred.
+  const totalError = runs.filter((r) => status(r) === "error" || status(r) === "failed").length;
+  const totalProcessing = runs.filter((r) => status(r) === "processing").length;
+  // Read off a widened type for the same reason the statuses are compared as
+  // strings: the engine is a separately versioned package and the pinned
+  // `SyncOneResult` does not carry this field yet.
+  const totalNoHr = runs.filter((r) => (r as { noHr?: boolean }).noHr === true).length;
+
+  // One row per run, for the dashboard's Sync log. Deferred runs count as
+  // skipped: from the panel's point of view a workout that waited is a workout
+  // that did not sync this time. Best effort, and it never throws.
+  await recordSyncRun(
+    postgresSyncStore(sql),
+    {
+      synced: totalSynced,
+      skipped: totalSkipped + totalDeferred + totalProcessing,
+      failed: totalError,
+    },
+    "manual",
+  );
 
   return NextResponse.json({
     dryRun: false,
@@ -140,6 +227,14 @@ export async function POST(request: Request) {
     totalSkipped,
     totalDeferred,
     totalError,
+    totalProcessing,
+    // "12 synced" and "12 synced, 4 without heart rate" are different answers,
+    // and only one of them explains the calorie figure the user is about to
+    // question (#343, #601).
+    totalNoHr,
+    // Log-only: a non-zero count means past races left two Garmin
+    // activities for one workout, and Settings can show which (#608).
+    duplicates,
     runs,
   });
 }

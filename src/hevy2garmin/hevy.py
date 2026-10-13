@@ -16,6 +16,7 @@ logger = logging.getLogger("hevy2garmin")
 class HevyAuthError(Exception):
     """Raised when the Hevy API rejects the API key (401/403)."""
 
+
 DEFAULT_BASE_URL = "https://api.hevyapp.com/v1"
 API_CALL_DELAY = 0.5
 
@@ -28,16 +29,20 @@ class HevyClient:
         api_key: str | None = None,
         base_url: str | None = None,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("HEVY_API_KEY_URL", DEFAULT_BASE_URL)).rstrip("/")
+        self.base_url = (base_url or os.environ.get("HEVY_API_KEY_URL", DEFAULT_BASE_URL)).rstrip(
+            "/"
+        )
         key = api_key or os.environ.get("HEVY_API_KEY", "")
         if not key:
             raise ValueError("Hevy API key required. Pass api_key= or set HEVY_API_KEY env var.")
 
         self.session = requests.Session()
-        self.session.headers.update({
-            "api-key": key,
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "api-key": key,
+                "Accept": "application/json",
+            }
+        )
         retry = Retry(
             total=5,
             backoff_factor=2,
@@ -58,7 +63,9 @@ class HevyClient:
             )
         resp.raise_for_status()
         # Log rate-limit headers when approaching the limit
-        remaining = resp.headers.get("X-RateLimit-Remaining") or resp.headers.get("x-ratelimit-remaining")
+        remaining = resp.headers.get("X-RateLimit-Remaining") or resp.headers.get(
+            "x-ratelimit-remaining"
+        )
         if remaining is not None:
             try:
                 rem = int(remaining)
@@ -88,7 +95,7 @@ class HevyClient:
         """
         try:
             data = self._get(f"/workouts/{workout_id}")
-        except Exception:
+        except Exception:  # noqa: BLE001  # auth, HTTP and JSON failures all mean "not available"
             return None
         if isinstance(data, dict):
             if "id" in data:
@@ -106,7 +113,9 @@ class HevyClient:
             data = self.get_workouts(page, page_size)
             workouts = data.get("workouts", [])
             all_workouts.extend(workouts)
-            logger.info("  Page %d/%d — %d workouts", page, data.get("page_count", "?"), len(workouts))
+            logger.info(
+                "  Page %d/%d — %d workouts", page, data.get("page_count", "?"), len(workouts)
+            )
             if page >= data.get("page_count", page):
                 break
             page += 1

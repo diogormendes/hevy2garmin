@@ -36,6 +36,38 @@ jobs:
       - name: Exercise map drift (TypeScript copy matches the Python source of truth)
         run: python scripts/gen_typescript_map.py --check
 
+      - name: requirements.txt matches pyproject's dependencies
+        # requirements.txt says CI asserts it; this is the assertion (#554).
+        run: |
+          python -m pip install -q 'tomli; python_version < "3.11"'
+          python - <<'PY'
+          try:
+              import tomllib
+          except ModuleNotFoundError:  # Python 3.10 in the matrix
+              import tomli as tomllib
+          want = sorted(tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"])
+          have = sorted(l.strip() for l in open("requirements.txt") if l.strip() and not l.startswith("#"))
+          assert want == have, f"pyproject: {want}\nrequirements.txt: {have}"
+          print("requirements.txt matches", len(want), "dependencies")
+          PY
+
+  check-ruff:
+    # Pinned: ruff 0.16 enables 826 rules by default where 0.14 enabled far fewer, so an
+    # unpinned `uvx ruff` moves the gate with every release (#553). Bump the version here and
+    # in pyproject's comment together, and re-run the campaign at the new version first.
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: ruff check
+        run: uvx ruff@0.16.7 check .
+
+      - name: ruff format --check
+        run: uvx ruff@0.16.7 format --check .
+
   check-postgres:
     name: Tests (Postgres)
     runs-on: ubuntu-latest
@@ -92,6 +124,35 @@ jobs:
       - name: Test
         run: npm test
 
+  check-universal:
+    # The Expo app was in no job at all (#551): tsc failed on a fresh checkout and nothing ran
+    # its tests. `expo lint` is not used here on purpose: it rewrites package.json, the lockfile
+    # and writes an eslint config before reporting, so a CI run would dirty the tree.
+    name: Tests (Universal)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: universal
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install exactly from the lockfile
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        # The committed flat config (#549); `expo lint` would scaffold and rewrite, eslint does not.
+        run: npm run lint -- --max-warnings 0
+
+      - name: Test
+        run: npm test
+
   check-web:
     name: Tests (Web)
     runs-on: ubuntu-latest
@@ -129,6 +190,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Lint
+        # eslint flat config (#552); `next lint` no longer exists in Next 16. Zero warnings is the gate.
+        run: npm run lint -- --max-warnings 0
+
       - name: Build
         # Routes are force-dynamic, so no real DB is touched at build time.
         env:
@@ -153,54 +218,6 @@ jobs:
           npx playwright test
         env:
           CI: "1"
-
-  check-fresh-fork:
-    # What a forker's Vercel deploy actually installs: the base [project.dependencies]
-    # only — no [dev]/[cloud] extras, no requirements.txt, non-editable (#357/#358 shape).
-    name: Fresh fork (Vercel-style base install)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install base dependencies only (no extras, non-editable)
-        run: pip install .
-
-      - name: Dependency consistency
-        run: pip check
-
-      - name: requirements.txt matches the base dependencies
-        run: |
-          python - <<'PYCHK'
-          import tomllib, re
-          norm = lambda s: re.sub(r"\s+", "", s)
-          base = {norm(d) for d in tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]}
-          req = {norm(l.split("#")[0]) for l in open("requirements.txt") if l.split("#")[0].strip()}
-          missing, extra = base - req, req - base
-          assert not missing and not extra, f"requirements.txt out of sync: missing={sorted(missing)} extra={sorted(extra)}"
-          print(f"requirements.txt matches {len(base)} base dependencies")
-          PYCHK
-
-      - name: Import the Vercel entry from outside the repo
-        # api/index.py falls back to src/ when the package is not installed; running it
-        # from another directory makes sure only the INSTALLED package and its deps are used.
-        run: |
-          mkdir -p /tmp/outside && cp api/index.py /tmp/outside/index.py
-          cd /tmp/outside && env -i PATH="$PATH" HOME=/tmp/outside python -c "import index; print('import ok:', index.app.title)"
-
-      - name: Boot the dashboard with no environment and answer over HTTP
-        run: |
-          cd /tmp/outside
-          env -i PATH="$PATH" HOME=/tmp/outside python -m uvicorn index:app --host 127.0.0.1 --port 8129 > uvicorn.log 2>&1 &
-          for i in $(seq 1 30); do
-            sleep 1
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8129/login || true)
-            case "$code" in 2*|3*) echo "GET /login -> $code"; exit 0;; esac
-          done
-          echo "dashboard did not answer on /login"; cat uvicorn.log; exit 1
 
   check-fresh-fork-web:
     # What a forker's Vercel deploy of the Next.js dashboard gets: a strict `npm ci` (a stale
@@ -227,9 +244,12 @@ jobs:
           DATABASE_URL: postgres://ci:ci@localhost:5432/ci
         run: npm run build
 
-      - name: Boot with a bare environment and answer on /login
+      - name: Boot the standalone server with a bare environment and answer on /login
+        # next.config.ts builds `output: standalone` off Vercel, and Next warns that `next start`
+        # does not serve a standalone build, so the server a self-hoster runs was never the one
+        # exercised here (#554). This boots the built server the way a Docker image does.
         run: |
-          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL=postgres://ci:ci@localhost:5432/ci npx next start --port 8097 > start.log 2>&1 &
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL=postgres://ci:ci@localhost:5432/ci PORT=8097 HOSTNAME=127.0.0.1 node .next/standalone/server.js > start.log 2>&1 &
           for i in $(seq 1 30); do
             sleep 1
             code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8097/login || true)
@@ -333,3 +353,11 @@ jobs:
             *720*) echo "persisted";;
             *) echo "the row is missing or wrong; a 200 was returned without a durable write"; exit 1;;
           esac
+
+      # The store's upserts need a real Postgres, and this job is the one that
+      # has it. Last, so the checks above see the database as the app left it;
+      # the tests delete only the rows they wrote. Without TEST_DATABASE_URL
+      # they skip, so an unset URL fails here rather than passing silently (#709).
+      - name: The store's upserts against real Postgres
+        working-directory: web
+        run: TEST_DATABASE_URL="${DATABASE_URL:?}" npx vitest run lib/pending-store.db.test.ts

@@ -1,6 +1,7 @@
 """The 'not configured' message must be context-aware (#224): telling a cloud /
 GitHub Actions user to run 'hevy2garmin init' (a local interactive wizard) is
 wrong — the real fix there is the dashboard setup + a matching DATABASE_URL."""
+
 from unittest.mock import patch
 
 from hevy2garmin.cli import _not_configured_message

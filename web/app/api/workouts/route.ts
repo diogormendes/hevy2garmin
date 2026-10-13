@@ -20,6 +20,9 @@ interface WorkoutItem {
   hevy_id: string;
   title: string;
   synced_at: string | null;
+  // When a resync last rewrote the row; synced_at stays the original sync.
+  // Optional for a client built before it existed (#709).
+  resynced_at?: string | null;
   calories: number | null;
   avg_hr: number | null;
   garmin_activity_id: string | null;
@@ -47,7 +50,7 @@ export async function GET() {
 
   const [terminal, pending] = await Promise.all([
     sql`
-      SELECT hevy_id, title, synced_at, calories, avg_hr, garmin_activity_id,
+      SELECT hevy_id, title, synced_at, resynced_at, calories, avg_hr, garmin_activity_id,
              COALESCE(status, 'success') AS status
       FROM synced_workouts
       ORDER BY synced_at DESC
@@ -58,6 +61,7 @@ export async function GET() {
           hevy_id: string;
           title: string | null;
           synced_at: string | null;
+          resynced_at: string | null;
           calories: number | null;
           avg_hr: number | null;
           garmin_activity_id: string | null;
@@ -89,6 +93,7 @@ export async function GET() {
     hevy_id: p.hevy_id,
     title: p.payload_title ?? "",
     synced_at: p.created_at ?? null,
+    resynced_at: null,
     calories: null,
     avg_hr: null,
     garmin_activity_id: p.garmin_activity_id ?? null,
@@ -106,6 +111,7 @@ export async function GET() {
       hevy_id: t.hevy_id,
       title: t.title ?? "",
       synced_at: t.synced_at ?? null,
+      resynced_at: t.resynced_at ?? null,
       calories: t.calories != null ? Number(t.calories) : null,
       avg_hr: t.avg_hr != null ? Number(t.avg_hr) : null,
       garmin_activity_id: t.garmin_activity_id ?? null,

@@ -17,6 +17,17 @@ vi.mock("@/lib/sync-one", () => ({
 
 vi.mock("@/lib/db", () => ({ getDb: () => ({}) }));
 
+// Typed with its real arity so `mock.calls[0][1]` is the totals object rather
+// than an index into an empty tuple.
+const recordSyncRun = vi.fn(
+  async (_store: unknown, _totals: unknown, _trigger: unknown): Promise<void> => {},
+);
+vi.mock("hevy2garmin", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSyncRun: (s: unknown, t: unknown, g: unknown) => recordSyncRun(s, t, g),
+}));
+vi.mock("@/lib/sync-store", () => ({ postgresSyncStore: () => ({}) }));
+
 const authEnabled = vi.fn();
 const verifySession = vi.fn();
 vi.mock("@/lib/auth", () => ({
@@ -125,5 +136,82 @@ describe("POST /api/sync-one — dry-run / auth gating", () => {
     const res = await POST(bad);
     expect(res.status).toBe(400);
     expect(syncOneWorkout).not.toHaveBeenCalled();
+  });
+});
+
+
+/**
+ * A manual sync has to leave a trace (#611, and again after konspir reported it
+ * a third time on r/Hevy).
+ *
+ * The writer used to live in sync-loop.tsx, so only "Sync all" recorded
+ * anything. The dashboard's own "Sync now" button and the per-workout button on
+ * Workouts both sync correctly and log nothing, and a user watching an empty
+ * panel has no way to tell that from a sync that never ran. Twice now the fix
+ * wired one more caller and called the feature done.
+ *
+ * It belongs in the route. A component can forget; a route every caller must go
+ * through cannot.
+ */
+describe("a live sync records a run", () => {
+  beforeEach(() => {
+    recordSyncRun.mockClear();
+    syncOneWorkout.mockReset();
+    authEnabled.mockReturnValue(false);
+  });
+
+  it("records one run for the dashboard's Sync now", async () => {
+    syncOneWorkout.mockResolvedValue(LIVE);
+    await POST(req("http://h/api/sync-one?live=1"));
+    expect(recordSyncRun).toHaveBeenCalledTimes(1);
+    expect(recordSyncRun.mock.calls[0][1]).toEqual({ synced: 1, skipped: 0, failed: 0 });
+    expect(recordSyncRun.mock.calls[0][2]).toBe("manual (one)");
+  });
+
+  it("counts a skip as a skip, not a sync", async () => {
+    syncOneWorkout.mockResolvedValue({ ...LIVE, status: "skipped" });
+    await POST(req("http://h/api/sync-one?live=1"));
+    expect(recordSyncRun.mock.calls[0][1]).toEqual({ synced: 0, skipped: 1, failed: 0 });
+  });
+
+  it("counts a failure as a failure", async () => {
+    syncOneWorkout.mockResolvedValue({ ...LIVE, status: "failed" });
+    await POST(req("http://h/api/sync-one?live=1"));
+    expect(recordSyncRun.mock.calls[0][1]).toEqual({ synced: 0, skipped: 0, failed: 1 });
+  });
+
+  it("records NOTHING when there was no candidate", async () => {
+    // Pressing Sync now with everything already synced returns status "none".
+    // The first version of this fix counted every unrecognised status as a
+    // success, so it wrote a false "1 synced" row every time.
+    syncOneWorkout.mockResolvedValue({ ...LIVE, status: "none" });
+    await POST(req("http://h/api/sync-one?live=1"));
+    expect(recordSyncRun).not.toHaveBeenCalled();
+  });
+
+  it("records NOTHING for a preview, which is not a sync", async () => {
+    // sync-panel's Preview hits the same route without live=1. Logging it would
+    // fill the panel with runs that never uploaded anything.
+    syncOneWorkout.mockResolvedValue(DRY);
+    await POST(req("http://h/api/sync-one"));
+    expect(recordSyncRun).not.toHaveBeenCalled();
+  });
+
+  it("records NOTHING when the caller is batching", async () => {
+    // sync-loop drives this route once per workout and posts its own totals to
+    // /api/sync-run at the end. Without the opt-out a ten-workout run would
+    // write eleven rows.
+    syncOneWorkout.mockResolvedValue(LIVE);
+    await POST(req("http://h/api/sync-one?live=1&batch=1"));
+    expect(recordSyncRun).not.toHaveBeenCalled();
+  });
+
+  it("still answers normally when recording fails", async () => {
+    // The log is an audit trail, not the job. Losing it must not turn a
+    // successful upload into an error the user sees.
+    syncOneWorkout.mockResolvedValue(LIVE);
+    recordSyncRun.mockRejectedValueOnce(new Error("sync_log is missing"));
+    const res = await POST(req("http://h/api/sync-one?live=1"));
+    expect(res.status).toBe(200);
   });
 });

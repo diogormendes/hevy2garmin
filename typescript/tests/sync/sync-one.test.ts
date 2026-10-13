@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { syncOneWorkout, listCandidates } from "../../src/sync";
+import { GarminUploadRejected } from "../../src/garmin";
 import { MemoryStore, mockGateway, WORKOUT } from "./helpers";
 
 /**
@@ -125,11 +126,56 @@ describe("dedup layer 3 + live upload — fresh workout on the live path", () =>
   it("upload throws → parks pending as processing with the error, no completion", async () => {
     gw.upload.mockRejectedValue(new Error("Garmin upload failed (500)"));
     const res = await syncOneWorkout(deps(), { dryRun: false });
-    expect(res.status).toBe("error");
+    // Reported as `processing`, not `error`. The row was already parked in the
+    // processing phase; what changed is that the caller is now told so. An
+    // ordinary upload failure may still have reached Garmin, and calling it an
+    // error invites the one thing that must not happen, a second upload.
+    expect(res.status).toBe("processing");
     expect(res.error).toContain("Garmin upload failed");
     expect(store.claimPending).toHaveBeenCalledTimes(1);
     expect(store.updatePending).toHaveBeenCalledWith("hevy-1", expect.objectContaining({ phase: "processing" }));
     expect(store.completePending).not.toHaveBeenCalled();
+  });
+
+  it("a rejected upload parks as failed, because nothing is there to find", async () => {
+    gw.upload.mockRejectedValue(new GarminUploadRejected("Garmin rejected upload: [duplicate]"));
+    const res = await syncOneWorkout(deps(), { dryRun: false });
+    expect(res.status).toBe("failed");
+    expect(store.updatePending).toHaveBeenCalledWith("hevy-1", expect.objectContaining({ phase: "failed" }));
+    expect(store.completePending).not.toHaveBeenCalled();
+  });
+
+  it("refuses to adopt an activity id that already existed before the upload", async () => {
+    // Garmin can answer with a pre-existing activity. Adopting it would mark
+    // the workout synced against something we never created, and the real
+    // upload would be lost.
+    gw.activitiesByDate.mockResolvedValue([{ activityId: 555 }]);
+    const res = await syncOneWorkout(deps(), { dryRun: false });
+    expect(res.garminActivityId).toBeNull();
+    expect(store.completePending).not.toHaveBeenCalled();
+  });
+
+  it("records the upload id so a reconcile can ask about this exact import", async () => {
+    await syncOneWorkout(deps(), { dryRun: false });
+    expect(store.updatePending).toHaveBeenCalledWith("hevy-1", expect.objectContaining({ upload_id: "99" }));
+  });
+
+  it("writes the pre-upload snapshot the reconcile needs", async () => {
+    gw.activitiesByDate.mockResolvedValue([{ activityId: 11 }, { activityId: 12 }]);
+    await syncOneWorkout(deps(), { dryRun: false });
+    expect(store.updatePending).toHaveBeenCalledWith(
+      "hevy-1",
+      expect.objectContaining({ pre_upload_ids: ["11", "12"] }),
+    );
+  });
+
+  it("drops the claim and rethrows when the snapshot itself fails", async () => {
+    // Without a snapshot there is no safe way to tell our upload from something
+    // that was already there, so Python refuses to upload blind and so do we.
+    gw.activitiesByDate.mockRejectedValue(new Error("Garmin list failed"));
+    await expect(syncOneWorkout(deps(), { dryRun: false })).rejects.toThrow("Garmin list failed");
+    expect(gw.upload).not.toHaveBeenCalled();
+    expect(store.deletePending).toHaveBeenCalledWith("hevy-1");
   });
 });
 

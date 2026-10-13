@@ -83,6 +83,12 @@ export function authEnabled(): boolean {
   return Boolean(process.env.HEVY2GARMIN_SECRET || process.env.H2G_SECRET || process.env.H2G_PASSWORD || process.env.H2G_PASSWORD_HASH);
 }
 
+/** True on a production runtime (a Vercel deploy, or `next start`); the setup page and the
+    proxy refuse to serve the dashboard there until a password is configured (#550). */
+export function productionRuntime(): boolean {
+  return Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
+}
+
 /**
  * Create a signed session cookie value: `v2.<ts>.<epoch>.<sig>`. The epoch is
  * folded into the signature so bumping the server-side counter ("sign out

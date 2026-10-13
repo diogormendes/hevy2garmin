@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getGithubPat, getGithubRepo, setupGithubActions, disableGithubActions } from "@/lib/github";
+import { resolveDatabaseUrl } from "@/lib/database-url";
 
 // Reads/writes the app_cache config at request time — never at build.
 export const dynamic = "force-dynamic";
@@ -51,9 +52,10 @@ export async function POST(request: Request) {
       const repo = getGithubRepo();
       if (enabled) {
         if (!pat) return NextResponse.json({ ok: false, error: "Auto-sync needs a GitHub token. Add one in Settings, then turn auto-sync on." }, { status: 400 });
-        if (repo && process.env.DATABASE_URL) {
+        const databaseUrl = resolveDatabaseUrl();
+        if (repo && databaseUrl) {
           const interval = Number(current.interval_minutes) || 120;
-          actions = await setupGithubActions({ pat, repo, databaseUrl: process.env.DATABASE_URL, intervalMinutes: interval });
+          actions = await setupGithubActions({ pat, repo, databaseUrl, intervalMinutes: interval });
           if (!actions.ok) return NextResponse.json({ ok: false, error: actions.message }, { status: 502 });
         }
       } else if (pat && repo) {

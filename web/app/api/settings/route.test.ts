@@ -89,3 +89,84 @@ describe("POST /api/settings — extended config surface", () => {
     expect(writes).toHaveLength(0);
   });
 });
+
+/**
+ * A mistyped timezone must be refused, not stored (#640).
+ *
+ * It used to be saved verbatim, and a zone that is not real produces no local
+ * timestamp in the FIT. The user then sees a setting that appears to do nothing,
+ * which is worse than an error, because there is nothing to search for.
+ */
+describe("timezone validation", () => {
+  beforeEach(() => {
+    writes.length = 0;
+  });
+
+  it("refuses a typo with a 400 that names the value", async () => {
+    const res = await POST(req({ user_profile: { timezone: "Europe/Athnes" } }));
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain("Europe/Athnes");
+    expect(writes).toEqual([]);
+  });
+
+  it("stores a real zone", async () => {
+    const res = await POST(req({ user_profile: { timezone: "Europe/Athens" } }));
+    expect(res.status).toBe(200);
+    expect(writes.find((w) => w.key === "user_profile")?.value.timezone).toBe("Europe/Athens");
+  });
+
+  it("stores the runtime's own spelling rather than the one typed", async () => {
+    const res = await POST(req({ user_profile: { timezone: "europe/athens" } }));
+    expect(res.status).toBe(200);
+    expect(writes.find((w) => w.key === "user_profile")?.value.timezone).toBe("Europe/Athens");
+  });
+
+  it("still allows blank, which means keep the previous UTC behaviour", async () => {
+    // The README offers blank as a real choice, so it is not a validation
+    // failure. Refusing it here would take away a documented option.
+    const res = await POST(req({ user_profile: { timezone: "", weight_kg: 80 } }));
+    expect(res.status).toBe(200);
+    expect(writes.find((w) => w.key === "user_profile")?.value.timezone).toBe("");
+  });
+
+  it("does not reject a save that never mentions a timezone", async () => {
+    const res = await POST(req({ user_profile: { weight_kg: 82 } }));
+    expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * The sync start date (#647).
+ *
+ * Requested by a user whose whole Hevy back catalogue showed as pending,
+ * because he had entered those workouts into Garmin by hand before finding the
+ * tool. A typo must be refused rather than stored, or it filters nothing and
+ * looks like the setting does not work.
+ */
+describe("sync start date", () => {
+  beforeEach(() => {
+    writes.length = 0;
+  });
+
+  it("stores a real date", async () => {
+    const res = await POST(req({ sync_window: { start_date: "2026-09-01" } }));
+    expect(res.status).toBe(200);
+    expect(writes.find((w) => w.key === "sync_window")?.value.start_date).toBe("2026-09-01");
+  });
+
+  it("refuses a malformed date with a 400 that names the value", async () => {
+    const res = await POST(req({ sync_window: { start_date: "01/09/2026" } }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("01/09/2026");
+    expect(writes).toEqual([]);
+  });
+
+  it("allows blank, which clears the window", async () => {
+    // Clearing it brings the older workouts back as candidates. Nothing was
+    // deleted, so this has to remain possible.
+    const res = await POST(req({ sync_window: { start_date: "" }, hr_fusion: { enabled: true } }));
+    expect(res.status).toBe(200);
+    expect(writes.find((w) => w.key === "sync_window")?.value.start_date).toBe("");
+  });
+});

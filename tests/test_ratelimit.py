@@ -1,19 +1,21 @@
 """Tests for the Garmin login rate-limit cooldown (exponential backoff)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
 from hevy2garmin.ratelimit import (
-    record_rate_limit,
-    cooldown_remaining,
-    clear_rate_limit,
-    format_cooldown,
     _KEY,
+    clear_rate_limit,
+    cooldown_remaining,
+    format_cooldown,
+    record_rate_limit,
 )
 
 
 class FakeDB:
     """In-memory app_config store."""
+
     def __init__(self):
         self._c = {}
 
@@ -33,9 +35,9 @@ def test_first_hit_is_two_hours():
 
 def test_backoff_doubles_each_repeat():
     db = FakeDB()
-    assert record_rate_limit(db) == 2 * 3600    # hit 1
-    assert record_rate_limit(db) == 4 * 3600    # hit 2
-    assert record_rate_limit(db) == 8 * 3600    # hit 3
+    assert record_rate_limit(db) == 2 * 3600  # hit 1
+    assert record_rate_limit(db) == 4 * 3600  # hit 2
+    assert record_rate_limit(db) == 8 * 3600  # hit 3
 
 
 def test_backoff_caps_at_24h():
@@ -62,10 +64,13 @@ def test_clear_resets_cooldown_and_backoff():
 
 def test_expired_cooldown_reports_zero():
     db = FakeDB()
-    db.set_app_config(_KEY, {
-        "until": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-        "hits": 1,
-    })
+    db.set_app_config(
+        _KEY,
+        {
+            "until": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+            "hits": 1,
+        },
+    )
     assert cooldown_remaining(db) == 0
 
 
@@ -85,8 +90,10 @@ def test_storage_failure_never_raises():
     class BrokenDB:
         def get_app_config(self, key):
             raise RuntimeError("db down")
+
         def set_app_config(self, key, value):
             raise RuntimeError("db down")
+
     db = BrokenDB()
     # must not raise
     assert record_rate_limit(db) == 2 * 3600
