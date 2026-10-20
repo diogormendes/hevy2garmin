@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
+import { countVisit } from "@/lib/visit-counter";
 
 /* Session verify is INLINED here (not imported from @/lib/auth) because Vercel's
    proxy bundler rejects a cross-module reference from the proxy even when the
@@ -111,6 +112,7 @@ const UNCONFIGURED_PATHS = [
   "/api/session-epoch",
   "/api/cron",
   "/api/version",
+  "/api/client-error",
 ];
 function unconfiguredRefusal(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
@@ -157,6 +159,8 @@ async function currentEpoch(origin: string): Promise<number> {
 // running", and whoever asks that is usually someone whose redeploy may not have taken,
 // so gating it made the two states it exists to tell apart both answer 401. It reports a
 // commit of a public repository and reads no database and no credential.
+// /api/client-error takes the optional error reports from a visitor's browser. It forwards
+// them only when a collector is configured, always answers 204 and reads nothing.
 const PUBLIC_PATHS = [
   "/login",
   "/api/login",
@@ -164,6 +168,7 @@ const PUBLIC_PATHS = [
   "/api/session-epoch",
   "/api/cron",
   "/api/version",
+  "/api/client-error",
 ];
 const STATIC_PREFIX = /^\/(_next|favicon|manifest|icons|robots|sitemap)/;
 
@@ -172,7 +177,7 @@ const STATIC_PREFIX = /^\/(_next|favicon|manifest|icons|robots|sitemap)/;
    every mutating /api call instead of 30 route-level checks, of which exactly
    one existed. Signing in and out stays allowed so the demo can be browsed. */
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const DEMO_ALLOWED = ["/api/login", "/api/logout"];
+const DEMO_ALLOWED = ["/api/login", "/api/logout", "/api/client-error"];
 function demoMode(): boolean {
   const v = (process.env.DEMO_MODE ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
@@ -184,7 +189,9 @@ function demoRefusal(): NextResponse {
 /** Gate every page + API route behind the shared-password session (mirrors auth.py).
     When no secret/password is set: open in development, but a production deploy serves only
     the setup and login pages until one is configured (#550). */
-export async function proxy(req: NextRequest) {
+export async function proxy(req: NextRequest, event?: NextFetchEvent) {
+  // Optional visit counter: does nothing unless COLLECTOR_URL and COLLECTOR_TOKEN are set.
+  countVisit(req, event);
   const { pathname } = req.nextUrl;
   if (STATIC_PREFIX.test(pathname)) return NextResponse.next();
   // Before the auth gate on purpose: a demo with auth disabled is still read-only.
@@ -214,7 +221,7 @@ export async function proxy(req: NextRequest) {
   if (pathname === "/api/session-epoch") return NextResponse.next();
 
   const cookie = req.cookies.get(SESSION_COOKIE)?.value ?? null;
-  const epoch = await currentEpoch(req.nextUrl.origin);
+  const epoch = await currentEpoch(req.nextUrl.origin + req.nextUrl.basePath);
   const authed = await verifySession(cookie, epoch);
 
   // Already signed in and hitting /login → bounce to the dashboard (or ?next=),

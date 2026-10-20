@@ -60,7 +60,9 @@ export async function POST(
     }
     const result = await syncRoutine(routine, sql);
     const code = result.status === "error" ? 502 : 200;
-    return NextResponse.json({ ok: result.status === "synced", ...result }, { status: code });
+    // "skipped" (already on Garmin, unchanged) is a success too; reporting it as a
+    // failure showed "Request failed (200)" on a routine that was fine (#729).
+    return NextResponse.json({ ok: result.status !== "error", ...result }, { status: code });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error }, { status: 502 });

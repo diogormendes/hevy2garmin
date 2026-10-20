@@ -6,10 +6,11 @@ import {
   initialLoopState,
   stepLoop,
   loopPercent,
-  errorHint,
+  errorText,
   type LoopState,
   type SyncOneLike,
 } from "@/lib/sync-loop";
+import { withBasePath } from "@/lib/base-path";
 
 /**
  * Live "Sync all" for the dashboard — ports the Python syncNow() loop. Clicking
@@ -30,7 +31,7 @@ import {
  */
 async function recordRun(state: LoopState): Promise<void> {
   try {
-    await fetch("/api/sync-run", {
+    await fetch(withBasePath("/api/sync-run"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -68,7 +69,9 @@ export function SyncLoop({ ready }: { ready: boolean }) {
         let httpStatus = 0;
         let result: SyncOneLike = {};
         try {
-          const res = await fetch("/api/sync-one?live=1", {
+          // batch=1: this loop posts ONE aggregate row to /api/sync-run when it
+          // finishes, so the route must not also write a row per workout.
+          const res = await fetch(withBasePath("/api/sync-one?live=1&batch=1"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ live: 1 }),
@@ -162,7 +165,7 @@ export function SyncLoop({ ready }: { ready: boolean }) {
           </div>
           {state.done && state.message && (
             <p className={`mt-2 text-xs ${state.errorKind ? "text-danger" : "text-text-secondary"}`} role={state.errorKind ? "alert" : undefined}>
-              {state.errorKind ? errorHint(state.errorKind) : state.message}
+              {state.errorKind ? errorText(state.errorKind, state.message) : state.message}
             </p>
           )}
         </div>

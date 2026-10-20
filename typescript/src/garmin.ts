@@ -4,6 +4,7 @@
  */
 import { GarminClient, NATIVE_API_USER_AGENT, NATIVE_X_GARMIN_USER_AGENT } from "garmin-auth";
 import { toUtcDate } from "./match";
+import type { CandidateActivity } from "./merge-match";
 
 function nativeHeaders(token: string, extra: Record<string, string> = {}): Record<string, string> {
   return {
@@ -180,6 +181,44 @@ export async function setDescription(client: GarminClient, activityId: number, d
   await postJson(client, `/activity-service/activity/${activityId}`, { activityId, description });
 }
 
+/** The fields of Garmin's single-activity response that a merge reads. */
+interface ActivityDetail {
+  activityId?: number;
+  activityName?: string;
+  activityTypeDTO?: { typeKey?: string };
+  metadataDTO?: { manufacturer?: string };
+  summaryDTO?: { startTimeGMT?: string; startTimeLocal?: string; duration?: number };
+}
+
+/**
+ * One activity by id, in the shape the merge matcher reads, or null when
+ * Garmin answers 404. A resync takes only its existence and its start from
+ * this; everything else it needs comes from the activity list.
+ *
+ * The 404 is the one answer that means the activity is gone, so it is the only
+ * one turned into null. Anything else says nothing about whether the activity
+ * exists and is thrown, so a resync never reports a live activity as deleted
+ * because Garmin had a bad moment.
+ */
+export async function getActivity(client: GarminClient, activityId: number): Promise<CandidateActivity | null> {
+  const url = `https://connectapi.${client.domain}/activity-service/activity/${activityId}`;
+  const req = () => fetch(url, { headers: nativeHeaders(client.di_token!, { NK: "NT" }) });
+  let res = await req();
+  if (res.status === 401) { await client.refreshDiToken(); res = await req(); }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`get activity ${activityId} → ${res.status}`);
+  const d = (await res.json()) as ActivityDetail;
+  return {
+    activityId: d.activityId ?? activityId,
+    activityName: d.activityName,
+    activityType: d.activityTypeDTO ? { typeKey: d.activityTypeDTO.typeKey } : undefined,
+    manufacturer: d.metadataDTO?.manufacturer,
+    startTimeGMT: d.summaryDTO?.startTimeGMT,
+    startTimeLocal: d.summaryDTO?.startTimeLocal,
+    duration: d.summaryDTO?.duration,
+  };
+}
+
 /** Delete an activity. */
 export async function deleteActivity(client: GarminClient, activityId: number): Promise<void> {
   const url = `https://connectapi.${client.domain}/activity-service/activity/${activityId}`;
@@ -218,6 +257,10 @@ export async function downloadActivityFit(
 /**
  * The Garmin display name, which the wellness endpoints are keyed by.
  *
+ * Read from `socialProfile`. `/userprofile-service/userprofile/profile` used to
+ * carry it too, but Garmin now answers that path with 404, which left every
+ * daily HR lookup empty without a word.
+ *
  * Cached per client: it does not change, and a sync would otherwise fetch the
  * same profile on every workout.
  */
@@ -228,7 +271,7 @@ export async function getDisplayName(client: GarminClient): Promise<string | nul
   let name: string | null = null;
   try {
     const profile = await client.connectapi<{ displayName?: string }>(
-      "/userprofile-service/userprofile/profile",
+      "/userprofile-service/socialProfile",
     );
     name = profile?.displayName ?? null;
   } catch {
@@ -258,12 +301,15 @@ export async function getDailyHeartRate(
 ): Promise<DailyHeartRateValue[]> {
   const day = String(date).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return [];
+  // Keyed by the display name when there is one. Without it, the unkeyed path
+  // serves the same readings for the signed-in user, so a profile lookup that
+  // fails costs nothing instead of the whole series.
   const who = await getDisplayName(client);
-  if (!who) return [];
+  const path = who
+    ? `/wellness-service/wellness/dailyHeartRate/${encodeURIComponent(who)}?date=${day}`
+    : `/wellness-service/wellness/dailyHeartRate?date=${day}`;
   try {
-    const data = await client.connectapi<{ heartRateValues?: unknown }>(
-      `/wellness-service/wellness/dailyHeartRate/${encodeURIComponent(who)}?date=${day}`,
-    );
+    const data = await client.connectapi<{ heartRateValues?: unknown }>(path);
     const values = data?.heartRateValues;
     if (!Array.isArray(values)) return [];
     return values.filter(

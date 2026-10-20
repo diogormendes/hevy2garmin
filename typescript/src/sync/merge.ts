@@ -24,7 +24,12 @@ import {
   type MergeMatchOptions,
   type TimedWorkout,
 } from "../merge-match";
-import { buildExerciseSetsPayload, pushWithNameFallback, type SetTiming } from "../exercise-sets";
+import {
+  applyExistingTiming,
+  buildExerciseSetsPayload,
+  pushWithNameFallback,
+  type SetTiming,
+} from "../exercise-sets";
 import type { GarminGateway } from "./gateway";
 
 export type WatchStrategy = "merge" | "replace" | "describe";
@@ -59,11 +64,22 @@ export interface MergeOptions extends MergeMatchOptions {
    * settings, so a merged workout is laid out the way an uploaded one is.
    */
   timing?: Partial<SetTiming>;
+  /**
+   * On a watch activity, keep the watch's own per-set execution and rest timing
+   * and write only Hevy's names, reps and weights (#748). Default true. Set
+   * false to sync the synthesized timing too, the pre-#748 behavior.
+   */
+  preserveWatchTiming?: boolean;
 }
 
 export interface MergeOutcome {
   /** Did we act on a watch activity at all? */
   merged: boolean;
+  /**
+   * The matched Garmin activity. Set on every outcome that found one, merged
+   * or not, and unset only when no activity was found or none was looked for.
+   * `syncOneWorkout`'s merge-only mode relies on exactly that split.
+   */
   activityId?: number;
   strategy?: WatchStrategy;
   /** Set when merged is false, so the caller can log why it fell through. */
@@ -208,8 +224,8 @@ export async function mergeIntoWatchActivity(
   // edited a workout in Hevy and re-synced got the title and description
   // updated and the sets left as they were, because the fall-through does
   // rename and describe only. Python merges here too (`merge.py:450-451`), and
-  // the read-back further down is the safeguard that comes with it (#597).
-  const isWatch = isWatchRecorded(act);
+  // the read-back in `pushSetsIntoActivity` is the safeguard that comes with it
+  // (#597).
   if (!IN_PLACE.has(strategy)) {
     return { merged: false, activityId: act.activityId, strategy, replaceWatchActivity: true };
   }
@@ -218,13 +234,42 @@ export async function mergeIntoWatchActivity(
     return { merged: true, activityId: act.activityId, strategy, setsPushed: 0 };
   }
 
+  return pushSetsIntoActivity(gateway, workout, act, options, deps);
+}
+
+/**
+ * Push a workout's sets into one known Garmin activity, with the backup before
+ * the PUT and the read-back after it.
+ *
+ * The second half of `mergeIntoWatchActivity`, callable on its own by a resync,
+ * which already knows its activity and must not search for one. `strategy`
+ * here only decides the read-back: under `merge`, a watch activity is not read
+ * back, and every other activity is.
+ */
+export async function pushSetsIntoActivity(
+  gateway: GarminGateway,
+  workout: TimedWorkout & { exercises?: unknown[] },
+  act: CandidateActivity,
+  options: MergeOptions = {},
+  deps: MergeDeps = {},
+): Promise<MergeOutcome> {
+  const strategy = options.strategy ?? DEFAULT_WATCH_STRATEGY;
+  const preserveWatchTiming = options.preserveWatchTiming ?? true;
+  const store = deps.store;
+  const isWatch = isWatchRecorded(act);
+
   const startTime = act.startTimeGMT || act.startTimeLocal || "";
   const durationS = act.duration ?? 0;
   if (!startTime || durationS <= 0) {
-    return { merged: false, reason: "matched activity is missing a start time or duration" };
+    return {
+      merged: false,
+      activityId: act.activityId,
+      strategy,
+      reason: "matched activity is missing a start time or duration",
+    };
   }
 
-  const payload = buildExerciseSetsPayload(
+  let payload = buildExerciseSetsPayload(
     workout as { exercises?: never[] },
     act.activityId,
     startTime,
@@ -252,6 +297,16 @@ export async function mergeIntoWatchActivity(
   // `merge_backup_<id>` so either stack can read the other's (#598).
   if (backup && store?.saveMergeBackup) {
     await store.saveMergeBackup(act.activityId, backup).catch(() => {});
+  }
+
+  // Keep the watch's own per-set execution and rest timing when we can (#748).
+  // Only for a watch recording: a DEVELOPMENT activity's existing sets are a
+  // previous hevy2garmin upload, not real device timing. applyExistingTiming
+  // returns null when the watch and Hevy disagree on how many sets there were,
+  // so the synthesized timing stands rather than a wrong mapping.
+  if (preserveWatchTiming && isWatch) {
+    const preserved = applyExistingTiming(payload, backup);
+    if (preserved) payload = preserved;
   }
 
   try {

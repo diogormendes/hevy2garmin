@@ -50,7 +50,7 @@ describe("an unchanged routine is left alone (#603)", () => {
   /** The hash this routine's generated payload actually produces. */
   const currentHash = workoutContentHash(routineToGarminWorkout(ROUTINE));
 
-  it("skips without touching Garmin when the content hash matches", async () => {
+  it("skips without writing to Garmin when the content hash matches", async () => {
     const c = client([], 900);
     const { sql } = sqlWith([
       { garmin_workout_id: "77", status: "success", content_hash: currentHash },

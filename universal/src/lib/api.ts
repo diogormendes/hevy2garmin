@@ -86,6 +86,8 @@ export interface WorkoutItem {
   hevy_id: string;
   title: string;
   synced_at: string | null;
+  /** When a resync last rewrote the row; synced_at stays the original sync. Absent from older servers. */
+  resynced_at?: string | null;
   calories: number | null;
   avg_hr: number | null;
   garmin_activity_id: string | null;

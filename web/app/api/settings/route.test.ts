@@ -135,3 +135,38 @@ describe("timezone validation", () => {
     expect(res.status).toBe(200);
   });
 });
+
+/**
+ * The sync start date (#647).
+ *
+ * Requested by a user whose whole Hevy back catalogue showed as pending,
+ * because he had entered those workouts into Garmin by hand before finding the
+ * tool. A typo must be refused rather than stored, or it filters nothing and
+ * looks like the setting does not work.
+ */
+describe("sync start date", () => {
+  beforeEach(() => {
+    writes.length = 0;
+  });
+
+  it("stores a real date", async () => {
+    const res = await POST(req({ sync_window: { start_date: "2026-09-01" } }));
+    expect(res.status).toBe(200);
+    expect(writes.find((w) => w.key === "sync_window")?.value.start_date).toBe("2026-09-01");
+  });
+
+  it("refuses a malformed date with a 400 that names the value", async () => {
+    const res = await POST(req({ sync_window: { start_date: "01/09/2026" } }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("01/09/2026");
+    expect(writes).toEqual([]);
+  });
+
+  it("allows blank, which clears the window", async () => {
+    // Clearing it brings the older workouts back as candidates. Nothing was
+    // deleted, so this has to remain possible.
+    const res = await POST(req({ sync_window: { start_date: "" }, hr_fusion: { enabled: true } }));
+    expect(res.status).toBe(200);
+    expect(writes.find((w) => w.key === "sync_window")?.value.start_date).toBe("");
+  });
+});

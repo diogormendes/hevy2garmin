@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { withBasePath } from "@/lib/base-path";
 
 interface Entry {
   scheduleId: string;
@@ -29,7 +30,7 @@ export function RoutineSchedules({
     setBusy(scheduleId);
     setError(null);
     try {
-      const res = await fetch(`/api/routines/${encodeURIComponent(hevyRoutineId)}/unschedule`, {
+      const res = await fetch(withBasePath(`/api/routines/${encodeURIComponent(hevyRoutineId)}/unschedule`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scheduleId }),
@@ -56,7 +57,7 @@ export function RoutineSchedules({
       {items.map((e) => (
         <span
           key={e.scheduleId}
-          className="inline-flex items-center gap-1 rounded-full bg-teal/15 px-2 py-0.5 text-xs font-medium text-teal"
+          className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-teal/15 px-2 py-0.5 text-xs font-medium text-teal"
         >
           {e.date}
           <button

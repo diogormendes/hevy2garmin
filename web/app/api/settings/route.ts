@@ -99,6 +99,13 @@ function sanitise(key: string, raw: Obj): Obj {
       const typed = String(raw.timezone).trim();
       out.timezone = typed ? (normaliseTimeZone(typed) ?? typed) : "";
     }
+  } else if (key === "sync_window") {
+    // Blank clears the window and brings the older workouts back as candidates,
+    // so it is a real choice rather than a failed validation (#647).
+    if ("start_date" in raw) {
+      const v = String(raw.start_date).trim();
+      out.start_date = v;
+    }
   } else if (key === "timing") {
     for (const [field, [lo, hi]] of Object.entries({
       working_set_seconds: [1, 3600],
@@ -115,7 +122,7 @@ function sanitise(key: string, raw: Obj): Obj {
   return out;
 }
 
-const EDITABLE = ["auto_sync", "hr_fusion", "merge_settings", "user_profile", "timing"];
+const EDITABLE = ["auto_sync", "hr_fusion", "merge_settings", "user_profile", "timing", "sync_window"];
 
 export async function POST(request: Request) {
   // Gate only when a password is configured (prod). With no password set the app
@@ -132,6 +139,14 @@ export async function POST(request: Request) {
     body = (await request.json()) as Obj;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  const sw = isObj(body.sync_window) ? (body.sync_window as Obj).start_date : undefined;
+  if (typeof sw === "string" && sw.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(sw.trim())) {
+    return NextResponse.json(
+      { error: `${sw.trim()} is not a date. Use YYYY-MM-DD, for example 2026-09-01.` },
+      { status: 400 },
+    );
   }
 
   const tz = isObj(body.user_profile) ? (body.user_profile as Obj).timezone : undefined;

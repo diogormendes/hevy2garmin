@@ -24,7 +24,7 @@ vi.mock("./db", () => ({ getDb: () => ({}) }));
 vi.mock("./garmin-upload", () => ({ getGarminClient: () => h.getGarminClient() }));
 vi.mock("./hevy-sync", () => ({ fetchAllWorkouts: () => h.fetchAllWorkouts() }));
 
-import { syncOneWorkout, listCandidates, type buildSyncDeps } from "./sync-one";
+import { syncOneWorkout, listCandidates, buildSyncDeps } from "./sync-one";
 
 type Deps = ReturnType<typeof buildSyncDeps>;
 
@@ -145,5 +145,45 @@ describe("listCandidates (route shim)", () => {
     const deps = h.engine.listCandidates.mock.calls[0][0] as Deps;
     await deps.store.isSynced("w9");
     expect(h.ps.isSynced).toHaveBeenCalledWith("w9", SQL);
+  });
+});
+
+/**
+ * The start date is applied in THIS app's fetch, before the engine sees the
+ * list (#647), so every path that reads candidates honours it without being
+ * told and the engine needs no release.
+ *
+ * Requested by a user whose whole Hevy back catalogue showed as pending,
+ * because he had entered those sessions into Garmin by hand before finding the
+ * tool.
+ */
+describe("sync start date", () => {
+  const OLD = { id: "old", title: "Before he installed it", start_time: "2025-06-01T10:00:00Z" };
+  const NEW = { id: "new", title: "After", start_time: "2026-09-15T18:00:00Z" };
+
+  async function fetchWith(startDate: string | null) {
+    const sql = makeSql(startDate ? { sync_window: { start_date: startDate } } : {}) as never;
+    const deps = buildSyncDeps(sql, { fetchWorkouts: async () => [OLD, NEW] as never });
+    return (await deps.fetchWorkouts()) as Array<{ id: string }>;
+  }
+
+  it("hides workouts from before the date", async () => {
+    expect((await fetchWith("2026-09-01")).map((w) => w.id)).toEqual(["new"]);
+  });
+
+  it("keeps everything when no date is set", async () => {
+    expect((await fetchWith(null)).map((w) => w.id)).toEqual(["old", "new"]);
+  });
+
+  it("does not limit a resync, whose workout is synced and may be older than the date", async () => {
+    const sql = makeSql({ sync_window: { start_date: "2026-09-01" } }) as never;
+    const deps = buildSyncDeps(sql, { fetchWorkouts: async () => [OLD] as never, targetActivityId: 4242 });
+    expect(((await deps.fetchWorkouts()) as Array<{ id: string }>).map((w) => w.id)).toEqual(["old"]);
+  });
+
+  it("keeps everything when the stored value is not a date", async () => {
+    // A bad value must never mean "hide everything": the user would see an
+    // empty list with nothing to explain it.
+    expect((await fetchWith("last tuesday")).map((w) => w.id)).toEqual(["old", "new"]);
   });
 });

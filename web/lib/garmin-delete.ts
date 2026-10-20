@@ -32,6 +32,14 @@ function headers(client: DeletableClient): Record<string, string> {
   };
 }
 
+/** A DELETE Garmin refused, with its HTTP status, so a caller can tell "already gone" (404) apart. */
+export class GarminDeleteError extends Error {
+  constructor(path: string, readonly status: number) {
+    super(`Garmin DELETE ${path} → ${status}`);
+    this.name = "GarminDeleteError";
+  }
+}
+
 export async function garminDelete(
   client: GarminClient,
   path: string,
@@ -46,6 +54,6 @@ export async function garminDelete(
     res = await f(url, { method: "DELETE", headers: headers(c) });
   }
   if (!res.ok) {
-    throw new Error(`Garmin DELETE ${path} → ${res.status}`);
+    throw new GarminDeleteError(path, res.status);
   }
 }

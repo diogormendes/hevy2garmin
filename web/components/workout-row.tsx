@@ -2,11 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { withBasePath } from "@/lib/base-path";
+import { canResync, resyncOutcome, type ResyncOutcome } from "@/lib/resync-row";
+import { resyncedLabel } from "@/lib/resynced";
 
 export interface WorkoutItem {
   hevy_id: string;
   title: string | null;
   when: string | null;
+  /** When the row was last resynced; `when` stays the original sync (#709). */
+  resynced_at?: string | null;
   garmin_activity_id: string | null;
   detail?: string | null;
   kind: "terminal" | "pending";
@@ -77,10 +82,25 @@ const actionBtn =
  * uploaded it themselves), "Skip" (never sync this one), and "Abandon" (drop the
  * stuck in-flight attempt so it can retry). Terminal rows get an "Unsync"
  * affordance that drops the local ledger row so the workout becomes a sync
- * candidate again. All POST to DB-only routes (no Garmin call) and refresh the
- * list on success.
+ * candidate again. All of these POST to DB-only routes (no Garmin call) and
+ * refresh the list on success.
+ *
+ * Rows this app synced, with a Garmin activity, also get "Resync", which
+ * pushes the current Hevy version into that activity in place (#701). It is the one
+ * action here that writes to Garmin, so it asks first, and it reports its
+ * outcome on the row: done, the activity is gone, or an error. `edited` puts
+ * the "Edited in Hevy" badge beside it, and `onResyncOutcome` tells the list
+ * how the resync went, so a success can take the badge away.
  */
-export function WorkoutRow({ item }: { item: WorkoutItem }) {
+export function WorkoutRow({
+  item,
+  edited = false,
+  onResyncOutcome,
+}: {
+  item: WorkoutItem;
+  edited?: boolean;
+  onResyncOutcome?: (hevyId: string, outcome: ResyncOutcome) => void;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [samples, setSamples] = useState<number[] | null | undefined>(undefined); // undefined = not fetched
@@ -91,9 +111,12 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [recoveryMsg, setRecoveryMsg] = useState<string | null>(null);
   const [retryConfirm, setRetryConfirm] = useState(false);
+  const [resyncConfirm, setResyncConfirm] = useState(false);
+  const [resyncResult, setResyncResult] = useState<ResyncOutcome | null>(null);
   const canHr = Boolean(item.garmin_activity_id);
   const canResolve = item.kind === "pending";
   const canUnsync = item.kind === "terminal";
+  const resynced = resyncedLabel(item.resynced_at, fmtDate);
 
   async function toggle() {
     const next = !open;
@@ -101,7 +124,7 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
     if (next && samples === undefined) {
       setLoading(true);
       try {
-        const res = await fetch(`/api/workout/${encodeURIComponent(item.hevy_id)}/hr`);
+        const res = await fetch(withBasePath(`/api/workout/${encodeURIComponent(item.hevy_id)}/hr`));
         const d = (await res.json().catch(() => ({}))) as { samples?: unknown };
         setSamples(Array.isArray(d.samples) ? (d.samples as number[]) : null);
       } catch {
@@ -116,7 +139,7 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
     setActing(true);
     setActionErr(null);
     try {
-      const res = await fetch(`/api/workout/${encodeURIComponent(item.hevy_id)}/${action}`, {
+      const res = await fetch(withBasePath(`/api/workout/${encodeURIComponent(item.hevy_id)}/${action}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason: "resolved from web" }),
@@ -141,7 +164,7 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
     setActing(true);
     setActionErr(null);
     try {
-      const res = await fetch(`/api/pending/${encodeURIComponent(item.hevy_id)}/abandon`, {
+      const res = await fetch(withBasePath(`/api/pending/${encodeURIComponent(item.hevy_id)}/abandon`), {
         method: "POST",
       });
       const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
@@ -165,7 +188,7 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
     setActionErr(null);
     setRecoveryMsg(null);
     try {
-      const res = await fetch(`/api/pending/${encodeURIComponent(item.hevy_id)}/reconcile`, {
+      const res = await fetch(withBasePath(`/api/pending/${encodeURIComponent(item.hevy_id)}/reconcile`), {
         method: "POST",
       });
       const d = (await res.json().catch(() => ({}))) as { ok?: boolean; status?: string; error?: string };
@@ -191,7 +214,7 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
     setActionErr(null);
     setRecoveryMsg(null);
     try {
-      const res = await fetch(`/api/pending/${encodeURIComponent(item.hevy_id)}/retry`, {
+      const res = await fetch(withBasePath(`/api/pending/${encodeURIComponent(item.hevy_id)}/retry`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirm: item.hevy_id }),
@@ -215,7 +238,7 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
     setActing(true);
     setActionErr(null);
     try {
-      const res = await fetch(`/api/unsync/${encodeURIComponent(item.hevy_id)}`, {
+      const res = await fetch(withBasePath(`/api/unsync/${encodeURIComponent(item.hevy_id)}`), {
         method: "POST",
       });
       const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
@@ -234,6 +257,36 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
     }
   }
 
+  async function resync() {
+    setActing(true);
+    setResyncResult(null);
+    try {
+      const res = await fetch(withBasePath(`/api/sync/${encodeURIComponent(item.hevy_id)}`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ live: true, resync: true }),
+      });
+      const d = (await res.json().catch(() => ({}))) as { status?: unknown; error?: unknown };
+      const outcome = resyncOutcome(res.ok, d);
+      setResyncResult(outcome);
+      onResyncOutcome?.(item.hevy_id, outcome);
+      if (outcome.kind === "success") {
+        setResyncConfirm(false);
+        router.refresh();
+      }
+    } catch (err) {
+      setResyncResult({ kind: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setActing(false);
+    }
+  }
+
+  const resyncResultCls = {
+    success: "text-success",
+    missing: "text-warm",
+    error: "text-danger",
+  } as const;
+
   return (
     <li className={`px-4 py-3 ${item.kind === "terminal" ? "opacity-70" : ""}`}>
       <div className="flex items-center justify-between gap-3">
@@ -241,6 +294,12 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
           <div className="truncate text-sm font-medium text-text">{item.title || "Untitled workout"}</div>
           <div className="mt-0.5 text-xs text-text-muted">
             {fmtDate(item.when)}
+            {resynced && (
+              <span className="hidden sm:inline">
+                {" · "}
+                <span className="whitespace-nowrap">{resynced}</span>
+              </span>
+            )}
             {item.garmin_activity_id && (
               <>
                 {" · "}
@@ -267,8 +326,15 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
             </a>
             {item.detail && <span className="text-text-secondary"> · {item.detail}</span>}
           </div>
+          {/* On a narrow screen the note gets its own line rather than
+              lengthening the date line beside the buttons. */}
+          {resynced && (
+            <div className="mt-0.5 text-xs text-text-muted sm:hidden">
+              <span className="whitespace-nowrap">{resynced}</span>
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {canResolve && (
             <button type="button" onClick={() => setResolving((v) => !v)} className={actionBtn}>
               {resolving ? "Cancel" : "Resolve"}
@@ -279,6 +345,26 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
               {open ? "Hide HR" : "HR"}
             </button>
           )}
+          {edited && (
+            <span
+              className="inline-block whitespace-nowrap rounded-full bg-warm/15 px-2.5 py-0.5 text-xs font-medium text-warm"
+              title="Changed in Hevy after it synced. Resync to update Garmin."
+            >
+              Edited in Hevy
+            </span>
+          )}
+          {canResync(item) && (
+            <button
+              type="button"
+              onClick={() => {
+                setResyncConfirm((v) => !v);
+                setResyncResult(null);
+              }}
+              className={actionBtn}
+            >
+              {resyncConfirm ? "Cancel" : "Resync"}
+            </button>
+          )}
           {canUnsync && (
             <button type="button" onClick={() => setUnsyncing((v) => !v)} className={actionBtn}>
               {unsyncing ? "Cancel" : "Unsync"}
@@ -287,6 +373,38 @@ export function WorkoutRow({ item }: { item: WorkoutItem }) {
           <StatusPill item={item} />
         </div>
       </div>
+
+      {resyncConfirm && (
+        <div className="mt-2 rounded-lg border border-border bg-surface p-3">
+          <p className="text-xs font-medium text-text">Resync from Hevy?</p>
+          <p className="mt-1 text-xs text-text-muted">
+            This replaces the exercises, sets, name and description of this
+            Garmin activity with the current Hevy version. Any changes made to
+            them in Garmin Connect will be lost. Heart rate and other watch data
+            are kept. For activities hevy2garmin uploaded, duration and calories
+            keep their original values.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={resync}
+              disabled={acting}
+              className="rounded-lg bg-teal/20 px-3 py-1.5 text-xs font-medium text-teal transition-colors hover:bg-teal/30 disabled:opacity-50"
+            >
+              {acting ? "Resyncing…" : "Resync"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {resyncResult && (
+        <p
+          className={`mt-2 text-xs ${resyncResultCls[resyncResult.kind]}`}
+          role={resyncResult.kind === "success" ? "status" : "alert"}
+        >
+          {resyncResult.text}
+        </p>
+      )}
 
       {unsyncing && (
         <div className="mt-2 rounded-lg border border-border bg-surface p-3">

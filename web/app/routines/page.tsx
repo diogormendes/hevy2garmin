@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { HevyRoutinesList } from "@/components/hevy-routines-list";
 import { RoutineSchedules } from "@/components/routine-schedules";
+import { RoutineRemove } from "@/components/routine-remove";
 
 // Queries the live hevy2garmin Postgres per request — never at build time.
 export const dynamic = "force-dynamic";
@@ -141,7 +142,11 @@ export default async function RoutinesPage() {
         calendar date. Synced routines are listed below.
       </div>
 
-      {data.dbConfigured && <HevyRoutinesList />}
+      {data.dbConfigured && (
+        <HevyRoutinesList
+          syncedIds={data.rows.filter((r) => r.status !== "missing_on_garmin").map((r) => r.hevy_routine_id)}
+        />
+      )}
 
       {!data.dbConfigured && (
         <div className="mb-6 rounded-lg border border-warm/40 bg-warm/10 p-4 text-sm text-warm">
@@ -174,6 +179,9 @@ export default async function RoutinesPage() {
                 <th className="px-4 py-2 font-medium">Garmin workout</th>
                 <th className="px-4 py-2 font-medium">Scheduled</th>
                 <th className="px-4 py-2 font-medium">Synced</th>
+                {/* Labelled for screen readers without an sr-only span: that is absolutely
+                    positioned, escapes the table's scroll box and widened the whole page. */}
+                <th className="px-4 py-2 font-medium" aria-label="Remove" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -193,6 +201,9 @@ export default async function RoutinesPage() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 tabular-nums text-text-muted">
                     {fmtDate(r.synced_at)}
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <RoutineRemove hevyRoutineId={r.hevy_routine_id} title={r.title || "this routine"} />
                   </td>
                 </tr>
               ))}

@@ -12,7 +12,7 @@ import type { GarminClient } from "garmin-auth";
 import {
   findActivityByStartTime, renameActivity, setDescription, uploadFit,
   getActivitiesByDate, getActivityExerciseSets, pushExerciseSets,
-  deleteActivity, downloadActivityFit, getDailyHeartRate,
+  deleteActivity, downloadActivityFit, getDailyHeartRate, getActivity,
   type UploadResult,
 } from "../garmin";
 import type { CandidateActivity } from "../merge-match";
@@ -64,6 +64,14 @@ export interface GarminGateway {
    * watch never recorded as an activity.
    */
   dailyHeartRate?(date: string): Promise<Array<[number, number | null]>>;
+  /**
+   * READ: one activity by id, or null when Garmin no longer has it. A resync
+   * starts here, from the id the ledger stored, to learn that the activity
+   * still exists and on which day, instead of searching by time. Optional so a
+   * consumer's own gateway keeps compiling; a resync through a gateway without
+   * it stops with an error.
+   */
+  activity?(activityId: number): Promise<CandidateActivity | null>;
 }
 
 /**
@@ -95,6 +103,7 @@ export function garminGateway(client: GarminClient, options: RateLimitOptions = 
     deleteActivity: (activityId) => limit(() => deleteActivity(client, activityId)),
     activityFit: (activityId) => limit(() => downloadActivityFit(client, activityId)),
     dailyHeartRate: (date) => limit(() => getDailyHeartRate(client, date)),
+    activity: (activityId) => limit(() => getActivity(client, activityId)),
   };
 }
 
@@ -125,6 +134,22 @@ export interface SyncDeps {
    *
    * Never awaited for its result and never allowed to throw: the Garmin delete
    * has already happened, and tidying elsewhere must not fail the sync.
+   *
+   * The third argument says which workout the replace was for, for a hook that
+   * keys what it records on the workout or needs its end. Optional, so a hook
+   * written for two arguments keeps working.
    */
-  onWatchActivityDeleted?: (activityId: number | string, workoutStart: string) => Promise<void>;
+  onWatchActivityDeleted?: (
+    activityId: number | string,
+    workoutStart: string,
+    context?: WatchActivityDeletedContext,
+  ) => Promise<void>;
+}
+
+/** The workout whose replace just deleted the watch copy. */
+export interface WatchActivityDeletedContext {
+  /** The Hevy workout id. */
+  hevyId: string;
+  /** The Hevy workout's end, or null when the workout carries none. */
+  workoutEnd: string | null;
 }

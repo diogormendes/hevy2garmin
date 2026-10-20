@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { NavBar } from "@/components/nav-bar";
 import { authEnabled } from "@/lib/auth";
+import { withBasePath } from "@/lib/base-path";
+import { clientErrorScript } from "@/lib/visit-counter";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,6 +20,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
+      <head>
+        {/* Optional error reports: forwarded only when a collector is configured. */}
+        <script dangerouslySetInnerHTML={{ __html: clientErrorScript(withBasePath("/api/client-error")) }} />
+      </head>
       <body className="bg-base text-text min-h-screen antialiased">
         <NavBar authEnabled={authEnabled()} />
         <div className="pb-20 md:pb-0">{children}</div>

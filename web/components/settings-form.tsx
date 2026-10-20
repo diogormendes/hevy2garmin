@@ -2,10 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { withBasePath } from "@/lib/base-path";
 
 interface Props {
   /** A GitHub token is saved (platform_credentials 'github'); the value itself is never sent to the browser. */
   githubTokenSet?: boolean;
+  /** A self-hosted server's own sync schedule (lib/server-schedule.ts). When set, the
+      GitHub token and the auto-sync controls, which only drive GitHub Actions, are hidden. */
+  serverSchedule?: string | null;
   autoSyncEnabled: boolean;
   autoSyncInterval: number;
   hrFusionEnabled: boolean;
@@ -27,6 +31,8 @@ interface Props {
   warmupSetSeconds: number | null;
   restBetweenSetsSeconds: number | null;
   restBetweenExercisesSeconds: number | null;
+  /** Workouts that finished before this are never sync candidates (#647). */
+  syncStartDate: string | null;
 }
 
 const INTERVALS = [30, 60, 120, 240, 360, 720, 1440];
@@ -75,7 +81,7 @@ export function SettingsForm(p: Props) {
   async function pullFromGarmin() {
     setPulling(true); setPullMsg(null);
     try {
-      const res = await fetch("/api/pull-garmin-profile", { method: "POST" });
+      const res = await fetch(withBasePath("/api/pull-garmin-profile"), { method: "POST" });
       const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; profile?: { weight_kg?: number | null; birth_year?: number | null; sex?: string | null; vo2max?: number | null } };
       if (!res.ok || !j.ok || !j.profile) { setPullMsg(j.error ?? `Request failed (${res.status}).`); return; }
       if (j.profile.weight_kg != null) setWeight(String(j.profile.weight_kg));
@@ -94,6 +100,7 @@ export function SettingsForm(p: Props) {
   const [sex, setSex] = useState(p.sex ?? "male");
   const [vo2max, setVo2max] = useState(p.vo2max != null ? String(p.vo2max) : "");
   const [timezone, setTimezone] = useState(p.timezone ?? "");
+  const [syncStartDate, setSyncStartDate] = useState(p.syncStartDate ?? "");
   const [mergeMode, setMergeMode] = useState(p.mergeMode);
   const [descEnabled, setDescEnabled] = useState(p.descriptionEnabled);
   const [overlap, setOverlap] = useState(p.mergeOverlapPct != null ? String(p.mergeOverlapPct) : "70");
@@ -145,6 +152,9 @@ export function SettingsForm(p: Props) {
           merge_activity_types: ["strength_training", ...extras],
         },
         user_profile: profile,
+        // Sent even when blank: clearing it is how the older workouts come back
+        // as candidates, so an empty string has to reach the server.
+        sync_window: { start_date: syncStartDate.trim() },
         timing: {
           working_set_seconds: numOrUndef(workingSet) ?? 40,
           warmup_set_seconds: numOrUndef(warmupSet) ?? 25,
@@ -153,7 +163,7 @@ export function SettingsForm(p: Props) {
         },
       };
       if (githubPat.trim()) (body as Record<string, unknown>).github_pat = githubPat.trim();
-      const res = await fetch("/api/settings", {
+      const res = await fetch(withBasePath("/api/settings"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -174,14 +184,23 @@ export function SettingsForm(p: Props) {
 
   return (
     <form onSubmit={submit} className="space-y-6">
-      <div className={cardCls}>
+      {!p.serverSchedule && <div className={cardCls}>
         <label className={labelCls} htmlFor="github_pat">GitHub token (auto-sync on your fork)</label>
         <input id="github_pat" type="password" autoComplete="off" value={githubPat} onChange={(e) => setGithubPat(e.target.value)}
           placeholder={p.githubTokenSet ? "•••• saved — enter a new one to replace it" : "ghp_… (repo + workflow scope)"} className={controlCls} />
         <p className="mt-0.5 text-xs text-text-muted">Stored in your database, same row the Python dashboard uses. Needed to enable auto-sync on Vercel.</p>
-      </div>
+      </div>}
       {/* Sync */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {p.serverSchedule ? (
+          <div className={cardCls}>
+            <span className="text-sm font-semibold text-text">Auto-sync</span>
+            <p className="mt-0.5 text-xs text-text-muted">
+              This server syncs {p.serverSchedule}, and the Hevy webhook syncs each finished workout.
+              The schedule is part of the server&apos;s deployment.
+            </p>
+          </div>
+        ) : (
         <div className={cardCls}>
           <label className="flex items-center justify-between gap-2">
             <span className="text-sm font-semibold text-text">Auto-sync</span>
@@ -193,6 +212,7 @@ export function SettingsForm(p: Props) {
             {INTERVALS.map((m) => (<option key={m} value={m}>{fmtInterval(m)}</option>))}
           </select>
         </div>
+        )}
         <Toggle label="HR fusion" checked={hrFusion} onChange={setHrFusion} hint="Pull heart-rate from a matched Garmin activity into the synced workout." />
       </div>
 
@@ -233,6 +253,14 @@ export function SettingsForm(p: Props) {
             ))}
           </datalist>
           <p className="mt-1.5 text-xs text-text-muted">Stamps local time into the FIT so Strava shows the correct workout time.</p>
+        </div>
+        <div className={`${cardCls} mt-4`}>
+          <label className={labelCls} htmlFor="sf-start-date">Sync workouts from</label>
+          <input id="sf-start-date" type="date" value={syncStartDate} onChange={(e) => setSyncStartDate(e.target.value)} className={controlCls} />
+          <p className="mt-1.5 text-xs text-text-muted">
+            Workouts finished before this date are never offered for sync. Useful if you logged
+            older sessions in Garmin by hand. Leave it empty to consider your whole Hevy history.
+          </p>
         </div>
         <button type="button" onClick={() => setShowCalc((v) => !v)} className="mt-2 text-xs text-teal underline">
           {showCalc ? "Hide" : "How are calories calculated?"}

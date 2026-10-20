@@ -146,15 +146,31 @@ export async function loadSyncSettings(sql: Sql): Promise<SyncSettings> {
       customMappings: Object.keys(customMappings).length ? customMappings : undefined,
       // The same four numbers the FIT uses, so a merged workout and an
       // uploaded one lay their sets out the same way.
-      timing: {
-        workingSetS: profile.workingSetS,
-        warmupSetS: profile.warmupSetS,
-        restSetsS: profile.restSetsS,
-        restExercisesS: profile.restExercisesS,
-      },
+      // Only the values the user saved. A missing one left as `undefined`
+      // overrode the engine's default and threw on every merge (#703).
+      timing: Object.fromEntries(
+        (["workingSetS", "warmupSetS", "restSetsS", "restExercisesS"] as const)
+          .filter((k) => profile[k] != null)
+          .map((k) => [k, profile[k]]),
+      ),
     },
     hrFusion: bool(hrCfg?.enabled, d.hrFusion),
     descriptionEnabled: bool(mergeCfg?.description_enabled, d.descriptionEnabled),
     profile,
   };
+}
+
+
+/**
+ * The sync start date, or null when the user has not set one (#647).
+ *
+ * Deliberately NOT part of SyncSettings. That object describes how a workout is
+ * turned into a Garmin activity, and this decides which workouts are offered at
+ * all. Mixing them would push a candidate-selection concern into the engine,
+ * which would then need a package release to change.
+ */
+export async function loadSyncStartDate(sql: Sql): Promise<string | null> {
+  const cfg = await readConfig(sql, "sync_window");
+  const v = cfg?.start_date;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
 }

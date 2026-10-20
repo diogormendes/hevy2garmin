@@ -1,10 +1,16 @@
 /**
  * Build a Garmin Connect planned-workout payload from a Hevy routine — the body
- * for POST /workout-service/workout. A faithful port of routine.py
- * (routine_to_garmin_workout): one flat interval step per set, a timed rest step
- * between consecutive sets, warmup vs. working step types, per-set weights in kg
- * or lb, and the provenance marker in the description. The numeric enum ids were
- * reverse-engineered + validated against a real Garmin export in the Python.
+ * for POST /workout-service/workout. Ported from routine.py
+ * (routine_to_garmin_workout): a timed rest step after each set, warmup vs.
+ * working step types, per-set weights in kg or lb, and the provenance marker in
+ * the description. The numeric enum ids were reverse-engineered +
+ * validated against a real Garmin export in the Python.
+ *
+ * Identical consecutive sets become one repeat block ("3 sets" in Garmin, as
+ * its own editor builds them), so the workout reads like the routine (#727).
+ * Sets that differ (a warmup, a changed weight or rep count) stay separate
+ * steps, so per-set weights are kept. routine.py still emits one flat step per
+ * set; it is frozen for the PyPI deprecation (#515).
  */
 import { lookupExercise } from "hevy2garmin";
 import { fitExerciseStrings } from "./garmin-exercise-strings";
@@ -13,6 +19,8 @@ const SPORT_TYPE_STRENGTH = { sportTypeId: 5, sportTypeKey: "strength_training" 
 const STEP_TYPE_WARMUP = { stepTypeId: 1, stepTypeKey: "warmup" };
 const STEP_TYPE_INTERVAL = { stepTypeId: 3, stepTypeKey: "interval" };
 const STEP_TYPE_REST = { stepTypeId: 5, stepTypeKey: "rest" };
+const STEP_TYPE_REPEAT = { stepTypeId: 6, stepTypeKey: "repeat" };
+const END_ITERATIONS = { conditionTypeId: 7, conditionTypeKey: "iterations" };
 const END_REPS = { conditionTypeId: 10, conditionTypeKey: "reps" };
 const END_TIME = { conditionTypeId: 2, conditionTypeKey: "time" };
 const END_LAP_BUTTON = { conditionTypeId: 1, conditionTypeKey: "lap.button" };
@@ -94,6 +102,18 @@ function restStep(order: number, restSeconds: number): Step {
   };
 }
 
+/**
+ * Two sets are one repeatable step when Garmin would show them the same: the
+ * same warmup/working type, the same end condition (reps, or else duration) and
+ * the same weight. Mirrors what buildStep reads from a set.
+ */
+function setKey(set: HevySet): string {
+  const warmup = (set.type ?? "").toLowerCase() === "warmup";
+  const reps = set.reps ?? null;
+  const duration = reps == null ? (set.duration_seconds ?? null) : null;
+  return JSON.stringify([warmup, reps, duration, set.weight_kg ?? null]);
+}
+
 export interface WorkoutBuildOptions {
   weightUnit?: "kilogram" | "pound";
   defaultRestSeconds?: number | null;
@@ -109,22 +129,68 @@ export function routineToGarminWorkout(
   const exercises = routine.exercises ?? [];
   const steps: Step[] = [];
   let order = 1;
+  let groupId = 0;
+  // Hevy's rest timer runs after every set, the last set of an exercise included,
+  // so the rest before the next exercise is a real step. Only the very last set of
+  // the workout has none after it (#730).
+  let lastExercise = -1;
+  exercises.forEach((e, idx) => {
+    if ((e.sets ?? []).length > 0) lastExercise = idx;
+  });
 
-  for (const exercise of exercises) {
+  for (const [exerciseIdx, exercise] of exercises.entries()) {
     const title = exercise.title || exercise.name || "Exercise";
     const { category, subcategory } = lookupExercise(title, exercise.exercise_template_id ?? null);
     const [categoryStr, exerciseNameStr] = fitExerciseStrings(category, subcategory);
 
     const restSeconds = exercise.rest_seconds ?? defaultRestSeconds;
     const sets = exercise.sets ?? [];
-    for (let i = 0; i < sets.length; i++) {
-      steps.push(buildStep(order, sets[i], title, categoryStr, exerciseNameStr, weightUnit));
-      order += 1;
-      // Rest goes BETWEEN sets of the same exercise, not after the last one.
-      if (restSeconds && i < sets.length - 1) {
-        steps.push(restStep(order, restSeconds));
+    let i = 0;
+    while (i < sets.length) {
+      // A run of identical consecutive sets.
+      let n = 1;
+      while (i + n < sets.length && setKey(sets[i + n]) === setKey(sets[i])) n += 1;
+      const endsWorkout = exerciseIdx === lastExercise && i + n === sets.length;
+
+      if (n >= 2) {
+        // One repeat block of n rounds, each the set and its rest. Garmin numbers
+        // the block first and its children after it, and marks the children with
+        // the block's childStepId (read back from a stored workout).
+        groupId += 1;
+        const groupOrder = order;
         order += 1;
+        const children: Step[] = [
+          { ...buildStep(order, sets[i], title, categoryStr, exerciseNameStr, weightUnit), childStepId: groupId },
+        ];
+        order += 1;
+        if (restSeconds) {
+          children.push({ ...restStep(order, restSeconds), childStepId: groupId });
+          order += 1;
+        }
+        steps.push({
+          type: "RepeatGroupDTO",
+          stepOrder: groupOrder,
+          stepType: STEP_TYPE_REPEAT,
+          childStepId: groupId,
+          numberOfIterations: n,
+          endCondition: END_ITERATIONS,
+          endConditionValue: n,
+          // The rest after the last round is the rest before whatever comes next;
+          // only the block that ends the workout skips it.
+          skipLastRestStep: Boolean(restSeconds) && endsWorkout,
+          smartRepeat: false,
+          workoutSteps: children,
+        });
+      } else {
+        steps.push(buildStep(order, sets[i], title, categoryStr, exerciseNameStr, weightUnit));
+        order += 1;
+        // Rest after the set, unless it is the last set of the workout.
+        if (restSeconds && !endsWorkout) {
+          steps.push(restStep(order, restSeconds));
+          order += 1;
+        }
       }
+      i += n;
     }
   }
 

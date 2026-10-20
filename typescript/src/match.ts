@@ -54,6 +54,46 @@ export function matchHevyToGarmin(hevyDts: HevyDt[], garminActs: GarminAct[]): A
   return out;
 }
 
+/** A match with the gap between the two starts, which decides a contested activity. */
+export interface TimedMatch { hevyId: string; aid: number; deltaMs: number; }
+
+/**
+ * Keep at most one workout per Garmin activity.
+ *
+ * `matchHevyToGarmin`'s second pass hands an unmatched workout the closest activity within six
+ * hours, and nothing removes an activity the first pass already paired, so a workout with no
+ * activity of its own can take one that belongs to another (seen in practice: a workout 44 to 50
+ * minutes after another one, claiming the first one's activity). Writing to the activity a claim
+ * names then overwrites the real workout's data.
+ *
+ * The winner is the smaller gap between the starts. An exact tie goes to the lower hevyId, so a
+ * re-run reaches the same answer. A match whose workout or activity cannot be timed is dropped.
+ */
+export function resolveExclusiveMatches(
+  matches: Array<{ hevyId: string; aid: number }>,
+  hevyDts: HevyDt[],
+  garminActs: GarminAct[],
+): { kept: TimedMatch[]; dropped: TimedMatch[] } {
+  const startOf = new Map(hevyDts.map((h) => [h.hevyId, h.date.getTime()]));
+  const actAt = new Map(garminActs.map((g) => [g.aid, Date.parse(g.gmt + "Z")]));
+  const timed: TimedMatch[] = [];
+  const dropped: TimedMatch[] = [];
+  for (const m of matches) {
+    const h = startOf.get(m.hevyId), a = actAt.get(m.aid);
+    if (h === undefined || a === undefined || isNaN(a)) { dropped.push({ ...m, deltaMs: NaN }); continue; }
+    timed.push({ ...m, deltaMs: Math.abs(a - h) });
+  }
+  const best = new Map<number, TimedMatch>();
+  for (const m of timed) {
+    const cur = best.get(m.aid);
+    if (!cur || m.deltaMs < cur.deltaMs || (m.deltaMs === cur.deltaMs && m.hevyId < cur.hevyId)) best.set(m.aid, m);
+  }
+  const kept = [...best.values()];
+  const keptIds = new Set(kept.map((m) => m.hevyId + "\u0000" + m.aid));
+  for (const m of timed) if (!keptIds.has(m.hevyId + "\u0000" + m.aid)) dropped.push(m);
+  return { kept, dropped };
+}
+
 /** Parse a Hevy/Garmin start into a UTC Date (naive strings treated as UTC). */
 export function toUtcDate(s: string): Date | null {
   if (!s) return null;

@@ -31,7 +31,8 @@ import { getGarminClient } from "./garmin-upload";
 import { fetchAllWorkouts, type HevyWorkout } from "./hevy-sync";
 import { hrDepsFor, type HrWorkout } from "./hr-store";
 import { postgresSyncStore } from "./sync-store";
-import { loadSyncSettings } from "./sync-settings";
+import { loadSyncSettings, loadSyncStartDate } from "./sync-settings";
+import { parseStartDate, withinSyncWindow } from "./sync-window";
 import type { Sql } from "./pending-store";
 
 export type {
@@ -65,8 +66,23 @@ export function buildSyncDeps(sql: Sql, options: SyncOneOptions = {}): SyncDeps 
     // Built once, lazily: the dry-run/no-candidate paths never log in to Garmin.
     gateway: () => (gateway ??= clientFactory().then(garminGateway)),
     fetchWorkouts: async () => {
-      const workouts = await fetchWorkouts();
-      for (const w of workouts) {
+      const all = await fetchWorkouts();
+      // Applied HERE, before the engine sees the list, so listCandidates and
+      // syncOneWorkout both honour it without being told and without the engine
+      // needing a release (#647).
+      //
+      // Not for a resync. The date chooses which workouts are sync candidates,
+      // and a resync's workout is already synced, possibly before the date was
+      // set. Hiding it would leave the engine nothing to resync from.
+      const startDate =
+        options.targetActivityId != null
+          ? null
+          : parseStartDate(await loadSyncStartDate(sql).catch(() => null));
+      const workouts = withinSyncWindow(all, startDate);
+      // The HR backup is looked up by id against the FULL list on purpose: a
+      // workout outside the window is not a candidate, but one that was synced
+      // before the window was set still has heart rate worth finding.
+      for (const w of all) {
         const id = String((w as { id?: unknown }).id ?? "");
         if (id) seen.set(id, w as HrWorkout);
       }

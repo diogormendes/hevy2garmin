@@ -13,7 +13,7 @@
  */
 import type { GarminClient } from "garmin-auth";
 import { getGarminClient } from "./garmin-upload";
-import { garminDelete } from "./garmin-delete";
+import { garminDelete, GarminDeleteError } from "./garmin-delete";
 import { routineToGarminWorkout, type HevyRoutine, type WorkoutBuildOptions } from "./garmin-workout";
 import {
   deleteGarminWorkout,
@@ -23,6 +23,7 @@ import {
   type GarminLibraryWorkout,
 } from "./garmin-workout-library";
 import { getDb } from "./db";
+import { loadSyncSettings } from "./sync-settings";
 
 type Sql = ReturnType<typeof getDb>;
 
@@ -30,6 +31,79 @@ interface Opts extends WorkoutBuildOptions {
   garminClientFactory?: () => Promise<GarminClient>;
   /** Re-create even when the content hash says nothing changed. */
   force?: boolean;
+  /** Test seam: today's date (YYYY-MM-DD) in the user's zone. */
+  today?: string;
+}
+
+/** Today's date (YYYY-MM-DD) in this zone, or in UTC when none is set or it is not valid. */
+export function todayInZone(timeZone: string | undefined, now: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: timeZone || "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+  } catch {
+    return now.toISOString().slice(0, 10);
+  }
+}
+
+/**
+ * Whether Garmin no longer has this workout. Only a definite 404 counts: any other
+ * failure is "unknown", and the caller keeps what it would have done (#729).
+ */
+async function workoutGoneOnGarmin(client: GarminClient, workoutId: string | null): Promise<boolean> {
+  if (workoutId == null) return false;
+  try {
+    await client.connectapi(`/workout-service/workout/${workoutId}`);
+    return false;
+  } catch (err) {
+    return (err as { status?: unknown })?.status === 404;
+  }
+}
+
+/**
+ * Put a re-created workout back on the dates its routine had booked.
+ *
+ * Garmin deletes a workout's calendar entries with the workout, so after the
+ * delete-then-create in syncRoutine the routine is off the calendar while
+ * routine_schedules still lists its dates. Today-or-later dates are booked again
+ * on the new workout and their old rows replaced; past dates are dropped, since
+ * re-booking them would put a stale planned workout into calendar history. A
+ * date that fails to book keeps its old row, so the next sync can try again.
+ * Ported from the Python sync, which did this (sync.py, the reschedule after
+ * create_workout). Returns whether any date is still waiting.
+ */
+async function rebookSchedules(
+  hevyId: string,
+  garminWorkoutId: number | string,
+  sql: Sql,
+  client: GarminClient,
+  today: string,
+): Promise<boolean> {
+  const rows = (await sql`
+    SELECT schedule_id, scheduled_date FROM routine_schedules WHERE hevy_routine_id = ${hevyId}
+  `.catch(() => [])) as Array<{ schedule_id: string; scheduled_date: string | null }>;
+  const byDate = new Map<string, string[]>();
+  for (const row of rows) {
+    const date = row.scheduled_date ?? "";
+    byDate.set(date, [...(byDate.get(date) ?? []), String(row.schedule_id)]);
+  }
+  let pending = false;
+  for (const [date, oldIds] of byDate) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date) && date >= today) {
+      const r = await scheduleRoutine(hevyId, garminWorkoutId, date, sql, { garminClientFactory: async () => client });
+      if (r.status !== "scheduled") {
+        pending = true;
+        continue;
+      }
+    }
+    for (const id of oldIds) {
+      await sql`DELETE FROM routine_schedules WHERE hevy_routine_id = ${hevyId} AND schedule_id = ${id}`;
+    }
+  }
+  return pending;
 }
 
 export interface RoutineSyncResult {
@@ -72,9 +146,15 @@ export async function syncRoutine(
     //
     // `schedule_pending` is deliberately not skippable: that row is unfinished,
     // and skipping it would strand the schedule retry.
-    const status = existing?.status ?? "success";
+    let status = existing?.status ?? "success";
     if (!opts.force && existing?.content_hash === contentHash && status === "success") {
-      return { status: "skipped", garminWorkoutId: existing.garmin_workout_id, error: null };
+      // A workout deleted in Garmin Connect still has a "success" row, because nothing
+      // told us. Skipping it would leave the routine impossible to sync again, so ask
+      // Garmin for it first (#729).
+      if (!(await workoutGoneOnGarmin(client, existing.garmin_workout_id))) {
+        return { status: "skipped", garminWorkoutId: existing.garmin_workout_id, error: null };
+      }
+      status = "missing_on_garmin";
     }
 
     // Ask Garmin what it actually has, so orphans from earlier syncs, a crash,
@@ -91,7 +171,7 @@ export async function syncRoutine(
     // Delete BEFORE creating. The other order means a crash in between leaves
     // the user with two workouts, which is the bug being fixed; this order
     // leaves them with none, and the next sync puts it back.
-    for (const staleId of staleWorkoutIds(library, workoutName, existing?.garmin_workout_id ?? null, existing?.status ?? null)) {
+    for (const staleId of staleWorkoutIds(library, workoutName, existing?.garmin_workout_id ?? null, existing ? status : null)) {
       try {
         await deleteGarminWorkout(client, staleId);
       } catch {
@@ -117,6 +197,13 @@ export async function syncRoutine(
         content_hash = EXCLUDED.content_hash,
         synced_at = NOW()
     `;
+    if (existing && garminWorkoutId != null) {
+      const today = opts.today ?? todayInZone((await loadSyncSettings(sql)).profile.timezone);
+      if (await rebookSchedules(hevyId, garminWorkoutId, sql, client, today)) {
+        // Not skippable, so the next sync re-creates the workout and tries the dates again.
+        await sql`UPDATE synced_routines SET status = 'schedule_pending' WHERE hevy_routine_id = ${hevyId}`;
+      }
+    }
     return { status: "synced", garminWorkoutId, error: null };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -222,12 +309,59 @@ export async function unscheduleRoutine(
 ): Promise<RoutineUnscheduleResult> {
   try {
     const client = await (opts.garminClientFactory ?? (() => getGarminClient()))();
-    await garminDelete(client, `/workout-service/schedule/${scheduleId}`);
+    try {
+      await garminDelete(client, `/workout-service/schedule/${scheduleId}`);
+    } catch (err) {
+      // 404: the entry is already gone, most often because the workout was deleted
+      // in Garmin Connect and took its calendar entries with it. Removing it here is
+      // then only the local record, which is what the user asked for (#729).
+      if (!(err instanceof GarminDeleteError && err.status === 404)) throw err;
+    }
     await sql`
       DELETE FROM routine_schedules
       WHERE hevy_routine_id = ${hevyRoutineId} AND schedule_id = ${scheduleId}
     `;
     return { status: "unscheduled", error: null };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return { status: "error", error };
+  }
+}
+
+export interface RoutineRemoveResult {
+  status: "removed" | "error";
+  error: string | null;
+}
+
+/**
+ * Remove a synced routine: delete its planned workout on Garmin and its rows here
+ * (#733). A 404 from Garmin means the workout is already gone, often deleted in
+ * Garmin Connect, so the local rows are removed anyway. Garmin deletes a workout's
+ * calendar entries with it, so the routine's schedule rows go too. Any other
+ * failure keeps everything, so a removal never leaves Garmin with a workout the
+ * page no longer lists.
+ */
+export async function removeRoutine(
+  hevyRoutineId: string,
+  sql: Sql = getDb(),
+  opts: { garminClientFactory?: () => Promise<GarminClient> } = {},
+): Promise<RoutineRemoveResult> {
+  try {
+    const rows = (await sql`
+      SELECT garmin_workout_id FROM synced_routines WHERE hevy_routine_id = ${hevyRoutineId} LIMIT 1
+    `) as Array<{ garmin_workout_id: string | null }>;
+    const workoutId = rows[0]?.garmin_workout_id ?? null;
+    if (workoutId != null) {
+      const client = await (opts.garminClientFactory ?? (() => getGarminClient()))();
+      try {
+        await deleteGarminWorkout(client, workoutId);
+      } catch (err) {
+        if (!(err instanceof GarminDeleteError && err.status === 404)) throw err;
+      }
+    }
+    await sql`DELETE FROM routine_schedules WHERE hevy_routine_id = ${hevyRoutineId}`;
+    await sql`DELETE FROM synced_routines WHERE hevy_routine_id = ${hevyRoutineId}`;
+    return { status: "removed", error: null };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     return { status: "error", error };
