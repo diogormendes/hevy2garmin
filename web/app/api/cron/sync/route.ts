@@ -7,6 +7,7 @@ import { getDb } from "@/lib/db";
 import { acquireSyncLock } from "hevy2garmin";
 import { postgresLockBackend } from "@/lib/sync-lock-store";
 import { getGithubPat, getGithubRepo, triggerViaActions } from "@/lib/github";
+import { syncFitInbox } from "@/lib/fit-inbox";
 
 // Runs the sync at request time — never at build.
 export const dynamic = "force-dynamic";
@@ -104,6 +105,19 @@ export async function GET(request: Request) {
     (r) => status(r) === "deferred" || status(r) === "skipped" || status(r) === "processing",
   ).length;
   const failed = runs.filter((r) => status(r) === "error" || status(r) === "failed").length;
-  await recordSyncRun(postgresSyncStore(sql), { synced, skipped: deferred, failed }, "cron");
-  return NextResponse.json({ ok: true, mode: "inline", ran: runs.length, synced });
+
+  const inbox = await syncFitInbox(sql).catch(() => ({ found: 0, synced: 0, skipped: 0, duplicates: 0, failed: 0 }));
+
+  await recordSyncRun(
+    postgresSyncStore(sql),
+    { synced: synced + inbox.synced, skipped: deferred + inbox.skipped, failed: failed + inbox.failed },
+    "cron",
+  );
+  return NextResponse.json({
+    ok: true,
+    mode: "inline",
+    ran: runs.length,
+    synced: synced + inbox.synced,
+    fitInbox: inbox,
+  });
 }

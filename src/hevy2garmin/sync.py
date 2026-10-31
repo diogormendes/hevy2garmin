@@ -883,6 +883,22 @@ def sync(
         except Exception:
             logger.debug("duplicate scan skipped", exc_info=True)
 
+    # Optional local FIT inbox folder (e.g. Synology Cloud Sync / Google Drive folder)
+    fit_inbox_dir = overrides.get("fit_inbox_dir") or cfg.get("fit_inbox_dir")
+    if fit_inbox_dir:
+        from hevy2garmin.fit_inbox import sync_fit_inbox
+
+        inbox_stats = sync_fit_inbox(
+            fit_inbox_dir,
+            garmin_client=garmin_client,
+            database=store,
+            dry_run=dry_run,
+            archive_uploaded=bool(cfg.get("fit_inbox_archive", False)),
+        )
+        stats["fit_inbox"] = inbox_stats
+        stats["synced"] += inbox_stats["synced"]
+        stats["failed"] += inbox_stats["failed"]
+
     if record_log:
         trigger = log_trigger
         if trigger is None:

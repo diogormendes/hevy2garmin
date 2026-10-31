@@ -48,7 +48,7 @@ COPY --from=builder /app/.next/static ./.next/static
 
 # The code stays root-owned and read-only for the app. Only Next's cache
 # directory is writable, by the `node` user (uid 1000) that ships in the base image.
-RUN mkdir -p .next/cache && chown node:node .next/cache
+RUN mkdir -p .next/cache /gdrive_sync && chown node:node .next/cache /gdrive_sync
 
 USER node
 EXPOSE 8096

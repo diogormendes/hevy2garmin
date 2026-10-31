@@ -50,6 +50,10 @@ services:
       # What the dashboard shows as auto-sync, instead of the toggle that drives
       # GitHub Actions. Keep it in step with SYNC_INTERVAL_SECONDS below.
       H2G_SERVER_SYNC_SCHEDULE: ${H2G_SERVER_SYNC_SCHEDULE:-every 2 hours}
+      # Optional: local folder containing .fit files (e.g. Synology Cloud Sync / Google Drive)
+      # H2G_FIT_INBOX_DIR: /gdrive_sync
+    # volumes:
+    #   - /volume2/docker/hevy2garmin/gdrive_sync:/gdrive_sync:ro
 
   # Auto-sync. The web app has no timer of its own; something has to call
   # GET /api/cron/sync with the cron secret. Every 2 hours by default, which

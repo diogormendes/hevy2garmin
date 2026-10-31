@@ -16,6 +16,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "hevy_api_key": "",
     "garmin_email": "",
     "garmin_token_dir": "~/.garminconnect",
+    "fit_inbox_dir": "",
+    "fit_inbox_archive": False,
     "user_profile": {
         "weight_kg": 80.0,
         "birth_year": 1990,
@@ -139,6 +141,14 @@ def load_config() -> dict[str, Any]:
         config["garmin_email"] = os.environ["GARMIN_EMAIL"]
     if not config.get("garmin_password") and os.environ.get("GARMIN_PASSWORD"):
         config["garmin_password"] = os.environ["GARMIN_PASSWORD"]
+    if os.environ.get("H2G_FIT_INBOX_DIR"):
+        config["fit_inbox_dir"] = os.environ["H2G_FIT_INBOX_DIR"].strip()
+    if os.environ.get("H2G_FIT_INBOX_ARCHIVE"):
+        config["fit_inbox_archive"] = os.environ["H2G_FIT_INBOX_ARCHIVE"].strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     # Normalize credential whitespace. A stray leading/trailing newline (the classic
     # copy-paste mistake) breaks the API call, and on the Vercel deploy the stored DB

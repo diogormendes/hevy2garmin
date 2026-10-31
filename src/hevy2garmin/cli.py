@@ -205,6 +205,8 @@ def cmd_sync(args: argparse.Namespace) -> None:
         overrides["garmin_email"] = args.garmin_email
     if args.garmin_password:
         overrides["garmin_password"] = args.garmin_password
+    if getattr(args, "fit_inbox", None):
+        overrides["fit_inbox_dir"] = args.fit_inbox
 
     result = sync(
         limit=args.limit,
@@ -217,8 +219,39 @@ def cmd_sync(args: argparse.Namespace) -> None:
     print(
         f"\n✓ Sync complete: {result['synced']} synced, {result['skipped']} skipped, {result['failed']} failed"
     )
+    if result.get("fit_inbox"):
+        ib = result["fit_inbox"]
+        print(
+            f"  📁 FIT inbox: {ib['synced']} uploaded, {ib['duplicates']} duplicates, "
+            f"{ib['skipped']} skipped, {ib['failed']} failed"
+        )
     if result.get("unmapped"):
         print(f"  ⚠ {len(result['unmapped'])} unmapped exercises — run: hevy2garmin unmapped")
+    if result["failed"] > 0:
+        sys.exit(1)
+
+
+def cmd_import_fit(args: argparse.Namespace) -> None:
+    """Upload new .fit files from a local inbox folder to Garmin Connect."""
+    cfg = load_config()
+    inbox_dir = args.dir or cfg.get("fit_inbox_dir")
+    if not inbox_dir:
+        raise RuntimeError(
+            "No FIT inbox directory specified. Pass a path or set H2G_FIT_INBOX_DIR."
+        )
+    from hevy2garmin.fit_inbox import sync_fit_inbox
+
+    garmin_client = None if args.dry_run else _garmin_client_from_config()
+    result = sync_fit_inbox(
+        inbox_dir,
+        garmin_client=garmin_client,
+        dry_run=args.dry_run,
+        archive_uploaded=args.archive or bool(cfg.get("fit_inbox_archive", False)),
+    )
+    print(
+        f"\n✓ FIT inbox: {result['synced']} uploaded, {result['duplicates']} duplicates, "
+        f"{result['skipped']} skipped, {result['failed']} failed"
+    )
     if result["failed"] > 0:
         sys.exit(1)
 
@@ -512,6 +545,27 @@ def main() -> None:
     sync_parser.add_argument(
         "--dry-run", action="store_true", help="Generate FIT files without uploading"
     )
+    sync_parser.add_argument(
+        "--fit-inbox",
+        metavar="DIR",
+        help="Also upload new .fit files from DIR (or set H2G_FIT_INBOX_DIR)",
+    )
+
+    # import-fit
+    import_fit_parser = subparsers.add_parser(
+        "import-fit", help="Upload new .fit files from a local folder to Garmin"
+    )
+    import_fit_parser.add_argument(
+        "dir", nargs="?", help="Folder containing .fit files (defaults to H2G_FIT_INBOX_DIR)"
+    )
+    import_fit_parser.add_argument(
+        "--dry-run", action="store_true", help="List new .fit files without uploading"
+    )
+    import_fit_parser.add_argument(
+        "--archive",
+        action="store_true",
+        help="Move uploaded .fit files into <dir>/uploaded/",
+    )
 
     # sync-routines
     routines_parser = subparsers.add_parser(
@@ -612,6 +666,7 @@ def main() -> None:
         commands = {
             "init": cmd_init,
             "sync": cmd_sync,
+            "import-fit": cmd_import_fit,
             "sync-routines": cmd_sync_routines,
             "status": cmd_status,
             "list": cmd_list,

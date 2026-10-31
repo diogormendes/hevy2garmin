@@ -11,6 +11,7 @@ import { detectDuplicates, garminClient } from "@/lib/garmin-activities";
 import { getHevyClient } from "@/lib/hevy-sync";
 import { getGithubPat, getGithubRepo, triggerViaActions } from "@/lib/github";
 import { verifySession, SESSION_COOKIE, authEnabled } from "@/lib/auth";
+import { syncFitInbox } from "@/lib/fit-inbox";
 
 // Reads live Hevy + Postgres (and, on the live path, Garmin) at request time.
 export const dynamic = "force-dynamic";
@@ -206,15 +207,17 @@ export async function POST(request: Request) {
   // `SyncOneResult` does not carry this field yet.
   const totalNoHr = runs.filter((r) => (r as { noHr?: boolean }).noHr === true).length;
 
+  const inbox = await syncFitInbox(sql).catch(() => ({ found: 0, synced: 0, skipped: 0, duplicates: 0, failed: 0 }));
+
   // One row per run, for the dashboard's Sync log. Deferred runs count as
   // skipped: from the panel's point of view a workout that waited is a workout
   // that did not sync this time. Best effort, and it never throws.
   await recordSyncRun(
     postgresSyncStore(sql),
     {
-      synced: totalSynced,
-      skipped: totalSkipped + totalDeferred + totalProcessing,
-      failed: totalError,
+      synced: totalSynced + inbox.synced,
+      skipped: totalSkipped + totalDeferred + totalProcessing + inbox.skipped,
+      failed: totalError + inbox.failed,
     },
     "manual",
   );
@@ -223,10 +226,10 @@ export async function POST(request: Request) {
     dryRun: false,
     mode: "inline",
     ran: runs.length,
-    totalSynced,
-    totalSkipped,
+    totalSynced: totalSynced + inbox.synced,
+    totalSkipped: totalSkipped + inbox.skipped,
     totalDeferred,
-    totalError,
+    totalError: totalError + inbox.failed,
     totalProcessing,
     // "12 synced" and "12 synced, 4 without heart rate" are different answers,
     // and only one of them explains the calorie figure the user is about to
@@ -235,6 +238,7 @@ export async function POST(request: Request) {
     // Log-only: a non-zero count means past races left two Garmin
     // activities for one workout, and Settings can show which (#608).
     duplicates,
+    fitInbox: inbox,
     runs,
   });
 }

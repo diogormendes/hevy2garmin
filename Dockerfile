@@ -34,9 +34,9 @@ FROM python:3.12-slim
 # existing installs. The directory is handed to the new user instead.
 RUN groupadd --system --gid 999 nonroot \
  && useradd --system --gid 999 --uid 999 --home-dir /root --no-create-home nonroot \
- && mkdir -p /root/.hevy2garmin /root/.garminconnect \
- && chown -R 999:999 /root \
- && chmod 755 /root
+ && mkdir -p /root/.hevy2garmin /root/.garminconnect /gdrive_sync \
+ && chown -R 999:999 /root /gdrive_sync \
+ && chmod 755 /root /gdrive_sync
 
 # Only the finished virtualenv crosses over — no build tools, no sources.
 COPY --from=builder /opt/venv /opt/venv

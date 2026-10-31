@@ -4,6 +4,7 @@ import { recordSyncRun } from "hevy2garmin";
 import { postgresSyncStore } from "@/lib/sync-store";
 import { getDb } from "@/lib/db";
 import { verifySession, SESSION_COOKIE, authEnabled } from "@/lib/auth";
+import { syncFitInbox } from "@/lib/fit-inbox";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -51,10 +52,9 @@ export async function POST(request: Request) {
   const synced = count(body.synced);
   const skipped = count(body.skipped);
   const failed = count(body.failed);
+  const hasFitInbox = Boolean((process.env.H2G_FIT_INBOX_DIR ?? "").trim());
 
-  // A run that did nothing at all is not worth a row. It would push real runs
-  // off the panel's ten-row window for no information.
-  if (synced + skipped + failed === 0) {
+  if (!hasFitInbox && synced + skipped + failed === 0) {
     return NextResponse.json({ ok: true, recorded: false });
   }
 
@@ -66,6 +66,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: `DB unavailable: ${error}` }, { status: 503 });
   }
 
-  await recordSyncRun(postgresSyncStore(sql), { synced, skipped, failed }, "manual");
-  return NextResponse.json({ ok: true, recorded: true, synced, skipped, failed });
+  const inbox = hasFitInbox
+    ? await syncFitInbox(sql).catch(() => ({ found: 0, synced: 0, skipped: 0, duplicates: 0, failed: 0 }))
+    : { found: 0, synced: 0, skipped: 0, duplicates: 0, failed: 0 };
+  const totalSynced = synced + inbox.synced;
+  const totalSkipped = skipped + inbox.skipped;
+  const totalFailed = failed + inbox.failed;
+
+  // A run that did nothing at all is not worth a row. It would push real runs
+  // off the panel's ten-row window for no information.
+  if (totalSynced + totalSkipped + totalFailed === 0) {
+    return NextResponse.json({ ok: true, recorded: false });
+  }
+
+  await recordSyncRun(
+    postgresSyncStore(sql),
+    { synced: totalSynced, skipped: totalSkipped, failed: totalFailed },
+    "manual",
+  );
+  return NextResponse.json({
+    ok: true,
+    recorded: true,
+    synced: totalSynced,
+    skipped: totalSkipped,
+    failed: totalFailed,
+    fitInbox: inbox,
+  });
 }
