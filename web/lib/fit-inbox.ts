@@ -8,12 +8,38 @@ import type { Sql } from "./pending-store";
 
 const IGNORED_DIRS = new Set(["uploaded", "processed", "@eadir", ".synologyworkingdirectory"]);
 
+export interface FitInboxFileResult {
+  fileName: string;
+  status: "synced" | "skipped" | "duplicate" | "failed";
+  activityId?: string | null;
+  error?: string;
+}
+
 export interface FitInboxStats {
   found: number;
   synced: number;
   skipped: number;
   duplicates: number;
   failed: number;
+  files: FitInboxFileResult[];
+}
+
+export interface FitInboxRecentRow {
+  hevy_id: string;
+  title: string;
+  synced_at: string | null;
+  garmin_activity_id: string | null;
+  status: string;
+  sync_method: string;
+}
+
+export interface FitInboxStatus {
+  configured: boolean;
+  inboxDir: string;
+  totalFilesInDir: number;
+  pendingFiles: Array<{ name: string; size: number; mtimeMs: number }>;
+  syncedCount: number;
+  recentSynced: FitInboxRecentRow[];
 }
 
 export function isValidFitBytes(data: Uint8Array): boolean {
@@ -38,11 +64,88 @@ function isDuplicateError(err: unknown): boolean {
   return text.includes("409") || text.includes("duplicate");
 }
 
+export async function getFitInboxStatus(
+  sql: Sql,
+  options: { inboxDir?: string } = {},
+): Promise<FitInboxStatus> {
+  const inboxDir = (options.inboxDir ?? process.env.H2G_FIT_INBOX_DIR ?? "").trim();
+  const empty: FitInboxStatus = {
+    configured: Boolean(inboxDir),
+    inboxDir,
+    totalFilesInDir: 0,
+    pendingFiles: [],
+    syncedCount: 0,
+    recentSynced: [],
+  };
+  if (!inboxDir) return empty;
+
+  let entries;
+  try {
+    entries = await fs.readdir(inboxDir, { withFileTypes: true });
+  } catch {
+    return empty;
+  }
+
+  const fitFiles: Array<{ name: string; filePath: string; size: number; mtimeMs: number }> = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || IGNORED_DIRS.has(entry.name.toLowerCase())) continue;
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".fit")) continue;
+    const filePath = path.join(inboxDir, entry.name);
+    try {
+      const st = await fs.stat(filePath);
+      fitFiles.push({ name: entry.name, filePath, size: st.size, mtimeMs: st.mtimeMs });
+    } catch {
+      continue;
+    }
+  }
+
+  const [syncedCountRows, recentRows] = await Promise.all([
+    sql`SELECT count(*)::int AS n FROM synced_workouts WHERE sync_method LIKE 'fit_inbox%'`.catch(() => [{ n: 0 }]),
+    sql`
+      SELECT hevy_id, title, synced_at, garmin_activity_id, COALESCE(status, 'success') AS status, COALESCE(sync_method, 'fit_inbox') AS sync_method
+      FROM synced_workouts
+      WHERE sync_method LIKE 'fit_inbox%'
+      ORDER BY synced_at DESC
+      LIMIT 20
+    `.catch(() => [] as FitInboxRecentRow[]),
+  ]);
+
+  const pendingFiles: Array<{ name: string; size: number; mtimeMs: number }> = [];
+  for (const file of fitFiles) {
+    try {
+      const data = await fs.readFile(file.filePath);
+      if (!isValidFitBytes(data)) continue;
+      const recId = fitRecordId(data);
+      if (!(await isSynced(recId, sql))) {
+        pendingFiles.push({ name: file.name, size: file.size, mtimeMs: file.mtimeMs });
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return {
+    configured: true,
+    inboxDir,
+    totalFilesInDir: fitFiles.length,
+    pendingFiles,
+    syncedCount: syncedCountRows[0]?.n ?? 0,
+    recentSynced: recentRows.map((r) => ({
+      hevy_id: r.hevy_id,
+      title: r.title ?? "",
+      synced_at: r.synced_at ?? null,
+      garmin_activity_id: r.garmin_activity_id ?? null,
+      status: r.status,
+      sync_method: r.sync_method,
+    })),
+  };
+}
+
 export async function syncFitInbox(
   sql: Sql,
   options: { inboxDir?: string; archiveUploaded?: boolean } = {},
 ): Promise<FitInboxStats> {
-  const stats: FitInboxStats = { found: 0, synced: 0, skipped: 0, duplicates: 0, failed: 0 };
+  const stats: FitInboxStats = { found: 0, synced: 0, skipped: 0, duplicates: 0, failed: 0, files: [] };
   const inboxDir = (options.inboxDir ?? process.env.H2G_FIT_INBOX_DIR ?? "").trim();
   if (!inboxDir) return stats;
 
@@ -53,7 +156,8 @@ export async function syncFitInbox(
   let entries;
   try {
     entries = await fs.readdir(inboxDir, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    console.error("[syncFitInbox] Cannot read inboxDir:", inboxDir, err);
     return stats;
   }
 
@@ -79,19 +183,22 @@ export async function syncFitInbox(
     let data: Buffer;
     try {
       data = await fs.readFile(item.filePath);
-    } catch {
+    } catch (err) {
       stats.failed += 1;
+      stats.files.push({ fileName: item.name, status: "failed", error: String(err) });
       continue;
     }
 
     if (!isValidFitBytes(data)) {
       stats.skipped += 1;
+      stats.files.push({ fileName: item.name, status: "skipped", error: "Not a valid FIT file" });
       continue;
     }
 
     const recId = fitRecordId(data);
     if (await isSynced(recId, sql)) {
       stats.skipped += 1;
+      stats.files.push({ fileName: item.name, status: "skipped", error: "Already synced" });
       if (archiveUploaded) await archiveFile(item.filePath, path.join(inboxDir, "uploaded"), item.name);
       continue;
     }
@@ -110,6 +217,7 @@ export async function syncFitInbox(
         sql,
       );
       stats.synced += 1;
+      stats.files.push({ fileName: item.name, status: "synced", activityId });
       if (archiveUploaded) await archiveFile(item.filePath, path.join(inboxDir, "uploaded"), item.name);
     } catch (err) {
       if (isDuplicateError(err)) {
@@ -119,9 +227,12 @@ export async function syncFitInbox(
           sql,
         );
         stats.duplicates += 1;
+        stats.files.push({ fileName: item.name, status: "duplicate", error: "Duplicate activity on Garmin" });
         if (archiveUploaded) await archiveFile(item.filePath, path.join(inboxDir, "uploaded"), item.name);
       } else {
         stats.failed += 1;
+        const msg = err instanceof Error ? err.message : String(err);
+        stats.files.push({ fileName: item.name, status: "failed", error: msg });
       }
     }
   }

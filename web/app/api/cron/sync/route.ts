@@ -69,6 +69,7 @@ export async function GET(request: Request) {
 
   const runs: SyncOneResult[] = [];
   const seen = new Set<string>();
+  let syncError: string | null = null;
   try {
     for (let i = 0; i < CAP; i++) {
       // respectGrace: nobody is watching this run, so a workout that just
@@ -86,8 +87,8 @@ export async function GET(request: Request) {
       if (r.status === "error") break;
     }
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ ok: false, error, ran: runs.length }, { status: 500 });
+    syncError = err instanceof Error ? err.message : String(err);
+    console.error("[cron/sync] error in syncOneWorkout:", syncError);
   } finally {
     await lock.release();
   }
@@ -104,20 +105,33 @@ export async function GET(request: Request) {
   const deferred = runs.filter(
     (r) => status(r) === "deferred" || status(r) === "skipped" || status(r) === "processing",
   ).length;
-  const failed = runs.filter((r) => status(r) === "error" || status(r) === "failed").length;
+  const failed =
+    runs.filter((r) => status(r) === "error" || status(r) === "failed").length + (syncError ? 1 : 0);
 
-  const inbox = await syncFitInbox(sql).catch(() => ({ found: 0, synced: 0, skipped: 0, duplicates: 0, failed: 0 }));
+  const inbox = await syncFitInbox(sql).catch((err) => {
+    console.error("[cron/sync] syncFitInbox error:", err);
+    return { found: 0, synced: 0, skipped: 0, duplicates: 0, failed: 0, files: [] };
+  });
+
+  const totalSynced = synced + inbox.synced;
+  const totalSkipped = deferred + inbox.skipped;
+  const totalFailed = failed + inbox.failed;
 
   await recordSyncRun(
     postgresSyncStore(sql),
-    { synced: synced + inbox.synced, skipped: deferred + inbox.skipped, failed: failed + inbox.failed },
+    { synced: totalSynced, skipped: totalSkipped, failed: totalFailed },
     "cron",
   );
+
+  if (syncError && runs.length === 0 && inbox.synced === 0) {
+    return NextResponse.json({ ok: false, error: syncError, ran: runs.length, fitInbox: inbox }, { status: 500 });
+  }
+
   return NextResponse.json({
     ok: true,
     mode: "inline",
     ran: runs.length,
-    synced: synced + inbox.synced,
+    synced: totalSynced,
     fitInbox: inbox,
   });
 }

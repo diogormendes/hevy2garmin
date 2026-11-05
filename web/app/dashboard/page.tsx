@@ -12,6 +12,8 @@ import { PipelineDiagram } from "@/components/pipeline-diagram";
 import { HEVY_TO_GARMIN } from "hevy2garmin";
 import { withBasePath } from "@/lib/base-path";
 import { UpdateBanner } from "@/components/update-banner";
+import { FitInboxCard } from "@/components/fit-inbox-card";
+import { getFitInboxStatus, type FitInboxStatus } from "@/lib/fit-inbox";
 
 // Queries the live hevy2garmin Postgres per request — never at build time.
 export const dynamic = "force-dynamic";
@@ -52,6 +54,7 @@ interface DashboardData {
   syncLog: SyncLogEntry[];
   autoSyncEnabled: boolean;
   autoSyncInterval: number;
+  fitInbox?: FitInboxStatus | null;
 }
 
 const EMPTY: DashboardData = {
@@ -69,6 +72,7 @@ const EMPTY: DashboardData = {
   syncLog: [],
   autoSyncEnabled: false,
   autoSyncInterval: 120,
+  fitInbox: null,
 };
 
 async function loadDashboard(): Promise<DashboardData> {
@@ -82,7 +86,7 @@ async function loadDashboard(): Promise<DashboardData> {
   try {
     // A missing table degrades to a sane default. Any other failure means the database did not
     // answer, and the catch below says so rather than showing an empty account (#765).
-    const [hevyConn, garminConn, counts, recent, syncLog, autoSync, pendingRow, routinesRow] = await Promise.all([
+    const [hevyConn, garminConn, counts, recent, syncLog, autoSync, pendingRow, routinesRow, fitInbox] = await Promise.all([
       loadHevyConnection(sql),
       loadGarminConnection(sql),
       sql`
@@ -121,6 +125,7 @@ async function loadDashboard(): Promise<DashboardData> {
           )::int AS scheduled
         FROM synced_routines
       `.catch(ifNoTable([] as Array<{ total: number; scheduled: number }>)),
+      getFitInboxStatus(sql).catch(() => null),
     ]);
 
     const autoSyncValue =
@@ -161,6 +166,7 @@ async function loadDashboard(): Promise<DashboardData> {
       })),
       autoSyncEnabled: Boolean(autoSyncValue.enabled),
       autoSyncInterval: Number(autoSyncValue.interval_minutes) || 120,
+      fitInbox,
     };
   } catch (error) {
     console.error("[loadDashboard] the database did not answer:", (error as Error)?.message ?? error);
@@ -309,6 +315,10 @@ export default async function DashboardPage() {
       </div>
       <div className="mt-3">
         <BatchSync ready={data.hevyConnected && data.garminConnected} onServer={serverSyncSchedule() != null} />
+      </div>
+
+      <div className="mt-6">
+        <FitInboxCard initialStatus={data.fitInbox} />
       </div>
 
       <div className="mb-8">

@@ -15,6 +15,13 @@ interface BatchResult {
   totalDeferred?: number;
   totalError?: number;
   error?: string;
+  fitInbox?: {
+    found: number;
+    synced: number;
+    skipped: number;
+    duplicates: number;
+    failed: number;
+  };
 }
 
 /**
@@ -140,7 +147,11 @@ export function BatchSync({ ready, onServer = false }: { ready: boolean; onServe
             <span className="text-text tabular-nums">
               Synced {result.totalSynced ?? 0}, skipped {result.totalSkipped ?? 0}
               {result.totalDeferred ? `, deferred ${result.totalDeferred}` : ""}
-              {result.totalError ? `, ${result.totalError} error(s)` : ""}.
+              {result.totalError ? `, ${result.totalError} error(s)` : ""}
+              {result.fitInbox && result.fitInbox.synced > 0
+                ? ` (including ${result.fitInbox.synced} FIT file${result.fitInbox.synced > 1 ? "s" : ""})`
+                : ""}
+              .
             </span>
           )}
         </div>
